@@ -1,0 +1,29 @@
+{
+  "name": "meovv-2026-yearbook-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for the MEOVV 2026 Yearbook fan event",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "test": "node --test test/*.test.js",
+    "schedule": "node scripts/print-schedule.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jammyjkdev/meovv-2026.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jammyjkdev/meovv-2026/issues"
+  },
+  "homepage": "https://github.com/jammyjkdev/meovv-2026#readme",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.28.0",
+    "luxon": "^3.7.2"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  }
+}
