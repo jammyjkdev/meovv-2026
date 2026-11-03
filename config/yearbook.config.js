@@ -33,8 +33,8 @@ module.exports = {
   songs: SONGS,
   timezone: 'America/New_York',
 
-  // Accent colour for embeds (hex number).
-  color: 0xff4f9a,
+  // Accent colour for embeds (hex number). Black: Discord treats 0x000000 as "no colour", so use 0x010101.
+  color: 0x010101,
 
   members: [
     { id: 'sooin', name: 'SOOIN', emoji: '🐱' },
