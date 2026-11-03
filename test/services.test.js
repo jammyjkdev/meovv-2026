@@ -78,9 +78,17 @@ test('merge/rename/exclude overrides feed poll options', async () => {
   assert.equal((await pollOptions(db, 'mv')).options.length, 3);
 });
 
-test('superlative polls list all members; review polls pool sources', async () => {
+test('superlative polls shortlist the most-nominated members; review polls pool sources', async () => {
   await nominateMember(db, { categoryId: 'best-dressed', memberId: 'anna', user: u(1) });
-  assert.equal((await pollOptions(db, 'best-dressed')).options.length, config.event.members.length);
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'anna', user: u(2) });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'ella', user: u(3) });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(4) });
+  await new Promise((r) => setTimeout(r, 5)); // so NARIN is clearly nominated before SOOIN
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'sooin', user: u(5) });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'ella', user: u(6) });
+  const { options } = await pollOptions(db, 'best-dressed');
+  assert.equal(options.length, config.event.polls.superlativeFinalists);
+  assert.deepEqual(options.map((o) => o.text), ['ANNA', 'NARIN', 'ELLA'], 'top 3 by nominations in member order (NARIN and SOOIN tie at 1; NARIN was nominated first)');
   const review = await pollOptions(db, 'most-played');
   assert.deepEqual(review.options.map((o) => o.text), ['HANDS UP', 'TOXIC']);
   assert.ok(review.note);
@@ -160,9 +168,12 @@ test('the event waits for the staff command, then runs from that point', async (
     assert.match(replies.at(-1), /haven’t opened/);
     assert.equal((await eventDb.nominationsFor('song')).length, 0);
 
-    // The command posts the announcement once and opens nominations.
+    // The command posts the announcement once, logs it, and opens nominations.
+    const announcements = () => sent.filter((m) => m.embeds?.[0]?.data.title?.startsWith('📸'));
     await runStart();
-    assert.equal(sent.length, 1);
+    assert.equal(announcements().length, 1);
+    assert.ok(sent.some((m) => /ran `announce:nominations` by hand/.test(m.content)), 'staff log records who started the event');
+    assert.ok(sent.some((m) => /Posted the \*\*nominations\*\* announcement/.test(m.content)), 'staff log records the announcement');
     assert.equal((await eventDb.jobStatus(START_JOB)).status, 'done');
     await nominateFan();
     assert.match(replies.at(-1), /Nominated/);
@@ -180,9 +191,30 @@ test('the event waits for the staff command, then runs from that point', async (
     await runStart();
     assert.match(replies.at(-1), /already started/);
     assert.equal(sent.length, afterTick);
-    assert.equal(sent.filter((m) => m.embeds?.[0]?.data.title?.startsWith('📸')).length, 1);
+    assert.equal(announcements().length, 1);
   } finally {
     await eventDb.close();
+  }
+});
+
+test('the yearbook cannot be published until an admin approves it', async () => {
+  const gateDb = await open(server.getUri(), { dbName: 'approval' });
+  try {
+    const sent = [];
+    const channel = { id: 'c', async send(m) { sent.push(m); return { id: `m${sent.length}`, url: `https://discord.test/${sent.length}` }; } };
+    const ctx = { db: gateDb, client: { channels: { fetch: async () => channel } } };
+    await assert.rejects(yearbook.publish(ctx), /not been approved/);
+    assert.equal(sent.length, 0, 'nothing posted while locked');
+    await yearbook.approve(gateDb, { id: 'admin' });
+    assert.equal((await yearbook.approval(gateDb)).by, 'admin');
+    const { url } = await yearbook.publish(ctx);
+    assert.ok(url);
+    assert.ok(sent.length >= 4, 'cover + section pages posted');
+    assert.ok(sent[0].files?.length === 1 && sent[0].content.includes('is here'));
+    await yearbook.lock(gateDb);
+    await assert.rejects(yearbook.publish(ctx), /not been approved/);
+  } finally {
+    await gateDb.close();
   }
 });
 

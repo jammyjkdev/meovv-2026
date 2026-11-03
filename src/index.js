@@ -7,7 +7,7 @@ const { MEMORY_BUTTON_ID } = require('./services/announcements');
 const scheduler = require('./services/scheduler');
 const log = require('./lib/log')('bot');
 
-const required = ['token', 'guildId', 'mongoUri', 'announceChannelId', 'pollChannelId', 'yearbookChannelId'];
+const required = ['token', 'guildId', 'mongoUri', 'announceChannelId', 'pollChannelId'];
 const missing = required.filter((k) => !config.env[k]);
 if (missing.length) {
   log.error(`Missing required settings: ${missing.join(', ')}. Copy .env.example to .env and fill it in.`);

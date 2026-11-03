@@ -58,15 +58,34 @@ function problems(book) {
 }
 
 
+// ── approval gate ──────────────────────────────────────────────
+// Nothing publishes, by hand or on schedule, until an admin approves. Stored with the scheduler's jobs.
+const APPROVAL_KEY = 'yearbook:approved';
+
+/** `{ by, at }` when approved, else null. */
+async function approval(db) {
+  const job = await db.jobStatus(APPROVAL_KEY);
+  return job?.status === 'done' ? { by: job.detail, at: job.at } : null;
+}
+async function approve(db, user) {
+  await db.markJob(APPROVAL_KEY, 'done', user.id);
+  log.info('yearbook approved for publishing', { by: user.id });
+}
+async function lock(db) {
+  await db.resetJob(APPROVAL_KEY);
+  log.info('yearbook locked');
+}
+
 /** Every page of the yearbook as PNG attachments. */
 function pageFiles(book) {
   return renderAll(book).map((p) => new AttachmentBuilder(p.buffer, { name: p.name }));
 }
 
-/** Post the yearbook to the yearbook channel: the cover with the ping, then one message per page so each shows full size. */
+/** Post the yearbook to the main event channel: the cover with the ping, then one message per page so each shows full size. */
 async function publish(ctx) {
+  if (!(await approval(ctx.db))) throw new Error('The yearbook has not been approved for publishing (/yb yearbook approve)');
   const book = await compile(ctx.db);
-  const channel = await ctx.client.channels.fetch(config.env.yearbookChannelId);
+  const channel = await ctx.client.channels.fetch(config.env.announceChannelId);
   const files = pageFiles(book);
   log.info('publishing yearbook', { pages: files.length, channel: channel.id });
   const ping = config.env.pingRoleId ? `<@&${config.env.pingRoleId}> ` : '';
@@ -82,4 +101,4 @@ async function publish(ctx) {
   return { url: first?.url, book };
 }
 
-module.exports = { compile, problems, pageFiles, publish };
+module.exports = { compile, problems, pageFiles, publish, approval, approve, lock };

@@ -22,9 +22,12 @@ async function pollOptions(db, categoryId) {
     const members = config.event.members;
     let picked = members;
     if (pc.superlativeFinalists < members.length) {
-      const counts = new Map((await ranked(db, cat.id)).map((n) => [n.norm, n.count]));
+      // most nominations first; on a tie, whoever was nominated earliest
+      const stats = new Map((await ranked(db, cat.id)).map((n) => [n.norm, n]));
+      const count = (m) => stats.get(m.id)?.count ?? 0;
+      const first = (m) => stats.get(m.id)?.firstAt ?? Infinity;
       picked = [...members]
-        .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0))
+        .sort((a, b) => count(b) - count(a) || first(a) - first(b))
         .slice(0, pc.superlativeFinalists);
       // keep the poll in the member list's natural order
       picked = members.filter((m) => picked.includes(m));

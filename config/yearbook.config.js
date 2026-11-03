@@ -67,8 +67,8 @@ module.exports = {
     finalistsPerPoll: 5,
     // Ignore nominations with fewer than this many votes when picking finalists.
     minNominationsToQualify: 1,
-    // Superlative polls: how many members to include (top nominated). Use 99 for "all members".
-    superlativeFinalists: 99,
+    // Superlative polls: how many members to include (the most-nominated). Use 99 for "all members".
+    superlativeFinalists: 3,
     // Year-in-review polls are posted on days from review.start up to and including this day.
     reviewPollsUntil: '2026-11-20',
   },

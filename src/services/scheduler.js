@@ -22,11 +22,13 @@ async function runJob(ctx, job, log) {
     case 'announce': {
       const ch = await client.channels.fetch(config.env.announceChannelId);
       const msg = await ch.send({ ...phaseAnnouncement(job.payload.phase), allowedMentions: { roles: config.env.pingRoleId ? [config.env.pingRoleId] : [] } });
+      await log(`📣 Posted the **${job.payload.phase}** announcement → ${msg.url}`);
       return { status: 'done', detail: msg.url };
     }
     case 'reminder': {
       const ch = await client.channels.fetch(config.env.announceChannelId);
       const msg = await ch.send({ ...reminderMessage(job.payload.index), allowedMentions: { roles: config.env.pingRoleId ? [config.env.pingRoleId] : [] } });
+      await log(`⏰ Posted reminder ${job.payload.index + 1} → ${msg.url}`);
       return { status: 'done', detail: msg.url };
     }
     case 'poll': {
@@ -39,14 +41,16 @@ async function runJob(ctx, job, log) {
       return { status: 'done', detail: res.url };
     }
     case 'reveal': {
-      if (config.event.autoPublish) {
+      const approved = await yearbook.approval(ctx.db);
+      if (config.event.autoPublish && approved) {
         const { url } = await yearbook.publish(ctx);
         await log(`📖 Yearbook auto-published → ${url}`);
         return { status: 'done', detail: url };
       }
       const issues = yearbook.problems(await yearbook.compile(ctx.db));
       await log(
-        `📖 **It's reveal time!** Run \`/yb yearbook preview\` to check it, then \`/yb yearbook publish\`.` +
+        `📖 **It's reveal time!** Run \`/yb yearbook preview\` to check it, then \`/yb yearbook publish confirm:true\`.` +
+          (approved ? '\n🔓 Approved for publishing.' : '\n🔒 Still locked — an admin must run `/yb yearbook approve` first.') +
           (issues.length ? `\nStill to sort out:\n• ${issues.join('\n• ')}` : '\nEverything looks complete ✅'),
       );
       return { status: 'done', detail: 'reminded staff' };

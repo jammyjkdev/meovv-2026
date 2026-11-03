@@ -18,7 +18,7 @@ function pollIntro(cat, options, endsAt) {
   const kicker = cat.type === 'review' ? `🔁 Year in Review · ${SECTION_HEADERS[cat.section] ?? ''}` : SECTION_HEADERS[cat.section] ?? '';
   const lines = [`## ${name}`, `${kicker}`.trim(), ''];
   if (cat.type === 'superlative') {
-    lines.push(`**${cat.title}** — who takes this superlative? Vote below! 🗳️`);
+    lines.push(`**${cat.title}** — your ${options.length} most-nominated members from Week 1. Who takes it? Vote below! 🗳️`);
   } else if (cat.type === 'nomination') {
     lines.push(`**${cat.title}** — these are your top nominations from Week 1. Vote for your favorite! 🗳️`);
   } else {

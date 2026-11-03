@@ -7,12 +7,21 @@ const { ranked, pollOptions } = require('../services/nominations');
 const polls = require('../services/polls');
 const yearbook = require('../services/yearbook');
 const scheduler = require('../services/scheduler');
+const { entries: logEntry } = require('../services/staffLog');
 
 const ephemeral = MessageFlags.Ephemeral;
 
-function isStaff(interaction) {
+/** Record a staff action in the log channel (after the reply, so the staff member isn't kept waiting). */
+const audit = (interaction, action) => logEntry.staff(interaction.client, { user: interaction.user, action });
+
+/** Bot owner or Manage Server: the people who can unlock the yearbook for publishing. */
+function isAdmin(interaction) {
   if (config.env.ownerId && interaction.user.id === config.env.ownerId) return true;
-  if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
+function isStaff(interaction) {
+  if (isAdmin(interaction)) return true;
   const roles = interaction.member?.roles;
   if (!config.env.adminRoleId || !roles) return false;
   return Array.isArray(roles) ? roles.includes(config.env.adminRoleId) : roles.cache.has(config.env.adminRoleId);
@@ -101,8 +110,10 @@ const data = () =>
     .addSubcommandGroup((g) =>
       g.setName('yearbook').setDescription('Final yearbook')
         .addSubcommand((s) => s.setName('preview').setDescription('Preview the yearbook pages privately before publishing'))
+        .addSubcommand((s) => s.setName('approve').setDescription('Admin only: unlock the yearbook so it can be published'))
+        .addSubcommand((s) => s.setName('lock').setDescription('Admin only: lock the yearbook again'))
         .addSubcommand((s) =>
-          s.setName('publish').setDescription('Publish the yearbook to the yearbook channel')
+          s.setName('publish').setDescription('Publish the yearbook to the event channel (needs admin approval first)')
             .addBooleanOption((o) => o.setName('confirm').setDescription('Yes, publish it publicly').setRequired(true)),
         ),
     )
@@ -210,22 +221,28 @@ async function nominationsGroup(sub, interaction, ctx) {
     const into = interaction.options.getString('into');
     if (from === into) return interaction.reply({ content: 'Pick two different nominees.', flags: ephemeral });
     const n = await ctx.db.mergeNominees(categoryId, from, into);
-    return interaction.reply({ content: `🔗 Merged ${n} nomination(s) from \`${from}\` into \`${into}\`.`, flags: ephemeral });
+    await interaction.reply({ content: `🔗 Merged ${n} nomination(s) from \`${from}\` into \`${into}\`.`, flags: ephemeral });
+    return audit(interaction, `merged \`${from}\` into \`${into}\` in **${cat.title}** (${n} nominations)`);
   }
+  const nominee = interaction.options.getString('nominee');
   if (sub === 'rename') {
-    await ctx.db.setOverride(categoryId, interaction.options.getString('nominee'), { display: clean(interaction.options.getString('name')) });
-    return interaction.reply({ content: '✏️ Display name updated.', flags: ephemeral });
+    const name = clean(interaction.options.getString('name'));
+    await ctx.db.setOverride(categoryId, nominee, { display: name });
+    await interaction.reply({ content: '✏️ Display name updated.', flags: ephemeral });
+    return audit(interaction, `renamed \`${nominee}\` to **${name}** in **${cat.title}**`);
   }
   if (sub === 'link') {
     const url = clean(interaction.options.getString('url') ?? '');
     if (url && !isHttpUrl(url)) return interaction.reply({ content: 'That isn’t a valid http(s) link.', flags: ephemeral });
-    await ctx.db.setOverride(categoryId, interaction.options.getString('nominee'), { link: url || null });
-    return interaction.reply({ content: url ? `🔗 Link set: <${url}>` : 'Link cleared (falls back to the most-submitted link).', flags: ephemeral });
+    await ctx.db.setOverride(categoryId, nominee, { link: url || null });
+    await interaction.reply({ content: url ? `🔗 Link set: <${url}>` : 'Link cleared (falls back to the most-submitted link).', flags: ephemeral });
+    return audit(interaction, url ? `set the link for \`${nominee}\` in **${cat.title}**: <${url}>` : `cleared the link for \`${nominee}\` in **${cat.title}**`);
   }
   if (sub === 'exclude') {
     const restore = interaction.options.getBoolean('restore') ?? false;
-    await ctx.db.setOverride(categoryId, interaction.options.getString('nominee'), { excluded: !restore });
-    return interaction.reply({ content: restore ? '↩️ Nominee restored.' : '🚫 Nominee excluded from the finals.', flags: ephemeral });
+    await ctx.db.setOverride(categoryId, nominee, { excluded: !restore });
+    await interaction.reply({ content: restore ? '↩️ Nominee restored.' : '🚫 Nominee excluded from the finals.', flags: ephemeral });
+    return audit(interaction, `${restore ? 'restored' : 'excluded'} \`${nominee}\` in **${cat.title}**`);
   }
 }
 
@@ -247,11 +264,12 @@ async function userGroup(sub, interaction, ctx) {
     if (!interaction.options.getBoolean('confirm')) return interaction.reply({ content: 'Nothing removed.', flags: ephemeral });
     const removed = await ctx.db.deleteNominationsByUser(target.id);
     if (memory) await ctx.db.updateMemory(memory.id, { removed: true, featured: false });
-    return interaction.reply({
+    await interaction.reply({
       content: `🗑️ Removed ${removed} nomination(s)${memory ? ' and hid their response' : ''} from ${target} (${target.id}).`,
       flags: ephemeral,
       allowedMentions: { parse: [] },
     });
+    return audit(interaction, `removed ${removed} nomination(s)${memory ? ` and response #${memory.id}` : ''} from <@${target.id}> (${target.id})`);
   }
 }
 
@@ -270,12 +288,16 @@ async function pollGroup(sub, interaction, ctx) {
     const raw = interaction.options.getString('options');
     const res = await polls.postPoll(ctx, categoryId, { options: raw ? parseOptions(raw) : undefined, force: interaction.options.getBoolean('force') ?? false });
     if (res.posted) await ctx.db.markJob(`poll:${categoryId}`, 'done', `${res.url} (manual)`);
-    return interaction.editReply(res.posted ? `✅ Posted → ${res.url}${res.note ? `\nℹ️ ${res.note}` : ''}` : `❌ ${res.reason}`);
+    await interaction.editReply(res.posted ? `✅ Posted → ${res.url}${res.note ? `\nℹ️ ${res.note}` : ''}` : `❌ ${res.reason}`);
+    if (res.posted) return audit(interaction, `posted the **${cat.title}** poll by hand${raw ? ' with custom answers' : ''} → ${res.url}`);
+    return;
   }
   if (sub === 'end') {
     await interaction.deferReply({ flags: ephemeral });
     const res = await polls.endPoll(ctx, categoryId);
-    return interaction.editReply(res.ok ? '⏹️ Poll ended. Results will be saved within a couple of minutes.' : `❌ ${res.reason}`);
+    await interaction.editReply(res.ok ? '⏹️ Poll ended. Results will be saved within a couple of minutes.' : `❌ ${res.reason}`);
+    if (res.ok) return audit(interaction, `ended the **${cat.title}** poll early`);
+    return;
   }
   if (sub === 'results') {
     await interaction.deferReply({ flags: ephemeral });
@@ -307,35 +329,60 @@ async function memoriesGroup(sub, interaction, ctx) {
   const id = interaction.options.getInteger('id');
   const memory = await ctx.db.getMemory(id);
   if (!memory || memory.removed) return interaction.reply({ content: `No response #${id}.`, flags: ephemeral });
+  const who = `response #${id} by <@${memory.user_id}>`;
   if (sub === 'feature') {
-    await ctx.db.updateMemory(id, { featured: true, anonymous: interaction.options.getBoolean('anonymous') ?? false });
-    return interaction.reply({ content: `⭐ Featured #${id}.`, flags: ephemeral });
+    const anonymous = interaction.options.getBoolean('anonymous') ?? false;
+    await ctx.db.updateMemory(id, { featured: true, anonymous });
+    await interaction.reply({ content: `⭐ Featured #${id}.`, flags: ephemeral });
+    return audit(interaction, `featured ${who}${anonymous ? ' (anonymous)' : ''}`);
   }
   if (sub === 'unfeature') {
     await ctx.db.updateMemory(id, { featured: false });
-    return interaction.reply({ content: `Un-featured #${id}.`, flags: ephemeral });
+    await interaction.reply({ content: `Un-featured #${id}.`, flags: ephemeral });
+    return audit(interaction, `un-featured ${who}`);
   }
   if (sub === 'remove') {
     await ctx.db.updateMemory(id, { removed: true, featured: false });
-    return interaction.reply({ content: `🗑️ Hidden #${id}.`, flags: ephemeral });
+    await interaction.reply({ content: `🗑️ Hidden #${id}.`, flags: ephemeral });
+    return audit(interaction, `hid ${who}`);
   }
 }
 
 async function yearbookGroup(sub, interaction, ctx) {
+  if (sub === 'approve' || sub === 'lock') {
+    if (!isAdmin(interaction)) return interaction.reply({ content: 'Only the bot owner or a member with Manage Server can approve or lock the yearbook.', flags: ephemeral });
+    if (sub === 'approve') {
+      await yearbook.approve(ctx.db, interaction.user);
+      await interaction.reply({ content: '🔓 Yearbook approved. Staff can now run `/yb yearbook publish confirm:true`.', flags: ephemeral });
+      return audit(interaction, '**approved the yearbook** for publishing 🔓');
+    }
+    await yearbook.lock(ctx.db);
+    await interaction.reply({ content: '🔒 Yearbook locked. Publishing is blocked until an admin approves it again.', flags: ephemeral });
+    return audit(interaction, '**locked the yearbook** 🔒');
+  }
+
   await interaction.deferReply({ flags: ephemeral });
   const book = await yearbook.compile(ctx.db);
   const issues = yearbook.problems(book);
+  const approval = await yearbook.approval(ctx.db);
+  const lockLine = approval ? `🔓 Approved by <@${approval.by}>` : '🔒 Locked — an admin must run `/yb yearbook approve` before it can be published';
   if (sub === 'preview') {
     return interaction.editReply({
-      content: issues.length ? `⚠️ **Before publishing:**\n• ${truncate(issues.join('\n• '), 1700)}` : '✅ Looks complete!',
+      content: `${issues.length ? `⚠️ **Before publishing:**\n• ${truncate(issues.join('\n• '), 1600)}` : '✅ Looks complete!'}\n${lockLine}`,
       files: yearbook.pageFiles(book).slice(0, 10),
+      allowedMentions: { parse: [] },
     });
   }
   if (sub === 'publish') {
     if (!interaction.options.getBoolean('confirm')) return interaction.editReply('Publishing cancelled.');
+    if (!approval) {
+      await interaction.editReply(`❌ Not published. ${lockLine}.`);
+      return audit(interaction, 'tried to publish the yearbook while it was locked');
+    }
     const { url } = await yearbook.publish(ctx);
     await ctx.db.markJob('reveal', 'done', `${url} (manual)`);
-    return interaction.editReply(`📖 Published → ${url}${issues.length ? `\n(Published with ${issues.length} open item(s).)` : ''}`);
+    await interaction.editReply(`📖 Published → ${url}${issues.length ? `\n(Published with ${issues.length} open item(s).)` : ''}`);
+    return audit(interaction, `published the yearbook${issues.length ? ` with ${issues.length} open item(s)` : ''} → ${url}`);
   }
 }
 
@@ -363,11 +410,13 @@ async function scheduleGroup(sub, interaction, ctx) {
   }
   if (sub === 'retry') {
     await ctx.db.resetJob(key);
-    return interaction.reply({ content: `🔁 \`${key}\` reset — it will run on the next scheduler pass if its time has come (and its window hasn’t passed). Use \`/yb schedule run\` to run it immediately.`, flags: ephemeral });
+    await interaction.reply({ content: `🔁 \`${key}\` reset — it will run on the next scheduler pass if its time has come (and its window hasn’t passed). Use \`/yb schedule run\` to run it immediately.`, flags: ephemeral });
+    return audit(interaction, `reset \`${key}\` so the scheduler runs it again`);
   }
   if (sub === 'run') {
     await interaction.deferReply({ flags: ephemeral });
     const log = scheduler.makeLogger(interaction.client);
+    await audit(interaction, `ran \`${key}\` by hand${key === START_JOB ? ' — **event started**' : ''}`);
     const { status: st, detail } = await scheduler.runJob(ctx, job, log);
     await ctx.db.markJob(key, st, detail);
     return interaction.editReply(`${st === 'done' ? '✅' : '⚠️'} \`${key}\` → ${st}${detail ? `: ${detail}` : ''}`);

@@ -45,9 +45,8 @@ Requires **Node.js 22+**.
 | `MONGO_URI` | MongoDB connection string |
 | `TZ` | Event timezone, for example `America/Los_Angeles`. Every date and time in the config is read in this zone. |
 | `LOG_LEVEL` | *(optional)* Console detail: `debug`, `info` (default), `warn` or `error`. `debug` also shows every scheduler pass and database write. |
-| `ANNOUNCE_CHANNEL_ID` | Phase announcements, reminders, and the "share your moment" button |
-| `POLL_CHANNEL_ID` | Daily yearbook polls |
-| `YEARBOOK_CHANNEL_ID` | Final reveal |
+| `ANNOUNCE_CHANNEL_ID` | Main event channel: phase announcements, reminders, the "share your moment" button and the final yearbook |
+| `POLL_CHANNEL_ID` | Daily yearbook polls (can be the same channel) |
 | `LOG_CHANNEL_ID` | **Private staff channel.** Every fan entry as it happens (nominations, withdrawals, shared moments, with the fan tagged but not pinged), plus poll results, warnings and the reveal checklist. |
 | `PING_ROLE_ID` | *(optional)* Role pinged on announcements and polls |
 | `ADMIN_ROLE_ID` | *(optional)* Extra staff role for `/yb`. Also allow this role on `/yb` under Server Settings → Integrations, because by default `/yb` is only visible to members with Manage Server. |
@@ -70,7 +69,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 - `user view | remove`: everything one fan nominated and shared, or wipe it (spam). The `user` option takes an @mention, or type their username or ID.
 - `poll preview | post | end | results`: check or override polls. `post options:"A | B=https://… | C"` posts hand-picked answers.
 - `memories list | feature | unfeature | remove`: choose fan responses for the yearbook, optionally credited anonymously
-- `yearbook preview | publish`: private preview of the PNG pages with a checklist, then the public reveal
+- `yearbook preview | approve | lock | publish`: private preview of the PNG pages with a checklist; `approve` (bot owner or Manage Server only) unlocks publishing; `publish` posts the reveal to the event channel
 - `schedule list | run | retry`: view the automatic timeline, run an item now, or retry a failed one
 
 ## Staff runbook
@@ -82,7 +81,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 5. **During Week 2 and 3:** results arrive in the log channel as each poll closes. Ties are flagged.
 6. **Before Nov 16:** fill in `options` for any Week 3 retrospective poll you want hand-picked in `config/yearbook.config.js`, then restart the bot. Without that, the bot pulls the top Week 1 nominations from the poll's `sources`.
 7. **Nov 16–22:** use `/yb memories list` to review responses and `/yb memories feature id:…` to pick the ones for the yearbook.
-8. **Nov 22:** the bot posts a checklist in the log channel. Run `/yb yearbook preview`, resolve anything flagged, then `/yb yearbook publish confirm:true`. The pages are 1080×1350 PNGs, ready for socials too.
+8. **Nov 22:** the bot posts a checklist in the log channel. Run `/yb yearbook preview`, resolve anything flagged, have an admin run `/yb yearbook approve`, then `/yb yearbook publish confirm:true`. Nothing publishes, by hand or on schedule, until it is approved. The pages are 1080×1350 PNGs, ready for socials too.
 
 > Discord polls show results publicly once they close, so the reveal reveals the full yearbook rather than individual winners for the first time.
 
@@ -95,7 +94,7 @@ Set `YEARBOOK_NOW=2026-11-09T11:58` in `.env` to make the bot think it's that ti
 - **Songs:** *Favorite MEOVV Song* only accepts songs from the `songs` list in the config. Add new releases there and restart the bot.
 - **Categories:** each category has an `enabled` flag. The brief suggests narrowing superlatives to 6–8, and *Best Off-Duty Style* is disabled by default. The scheduler spreads whatever is enabled evenly across the week.
 - **Poll timing:** `polls.postTimes` sets the posting times, `polls.durationHours` sets how long polls stay open (48h by default), and every poll is cut off at least `closeBeforeRevealHours` before the reveal.
-- **Finalists:** `polls.finalistsPerPoll` (default 5, Discord's maximum is 10) sets how many top nominations make each Week 2 poll. Poll answers are limited to 55 characters, and `/yb nominations rename` sets a clean display name.
+- **Finalists:** `polls.finalistsPerPoll` (default 5, Discord's maximum is 10) sets how many top nominations make each Week 2 poll. `polls.superlativeFinalists` (default 3) shortlists the most-nominated members for each superlative poll; ties go to whoever was nominated first. Poll answers are limited to 55 characters, and `/yb nominations rename` sets a clean display name.
 - **Yearbook sections:** a category's `section` (`favorites` or `moments`) decides where its winner appears.
 
 ## Development

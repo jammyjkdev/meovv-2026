@@ -31,6 +31,8 @@ const entries = {
     staffLog(client, `🗑️ ${fanRef(user)} withdrew their **${category}** nomination`),
   memory: (client, { user, id, text, status }) =>
     staffLog(client, `${status === 'updated' ? '🔁' : '💌'} ${fanRef(user)} shared their moment (#${id}):\n> ${text.replace(/\n/g, '\n> ')}`),
+  /** A staff action, so the channel is a full audit trail of who changed what. */
+  staff: (client, { user, action }) => staffLog(client, `🛠️ ${fanRef(user)} ${action}`),
 };
 
 module.exports = { staffLog, entries };

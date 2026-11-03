@@ -64,7 +64,6 @@ const env = {
   mongoUri: process.env.MONGO_URI,
   announceChannelId: process.env.ANNOUNCE_CHANNEL_ID,
   pollChannelId: process.env.POLL_CHANNEL_ID,
-  yearbookChannelId: process.env.YEARBOOK_CHANNEL_ID,
   logChannelId: process.env.LOG_CHANNEL_ID,
   pingRoleId: process.env.PING_ROLE_ID || null,
   adminRoleId: process.env.ADMIN_ROLE_ID || null,
