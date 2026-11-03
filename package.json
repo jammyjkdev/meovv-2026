@@ -18,12 +18,15 @@
   },
   "homepage": "https://github.com/jammyjkdev/meovv-2026#readme",
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
     "discord.js": "^14.28.0",
-    "luxon": "^3.7.2"
+    "luxon": "^3.7.2",
+    "mongodb": "^7.8.0"
   },
   "private": true,
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
   }
 }

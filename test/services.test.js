@@ -1,55 +1,111 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-process.env.DATABASE_PATH = ':memory:';
-const db = require('../src/db').open(':memory:');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { open, resolveDbName, DEFAULT_DB_NAME } = require('../src/db');
 const config = require('../src/config');
 const { pollOptions, nominateMember, nominateMoment, ranked } = require('../src/services/nominations');
 const yearbook = require('../src/services/yearbook');
+const scheduler = require('../src/services/scheduler');
 const { phaseAnnouncement } = require('../src/services/announcements');
-const { parseOptions } = require('../src/commands/admin');
+const { parseOptions, yb } = require('../src/commands/admin');
+const { nominate } = require('../src/commands/fan');
+const { START_JOB } = require('../src/services/event');
 const { commands } = require('../src/commands');
 
 const u = (n) => ({ id: `u${n}`, name: `Fan ${n}` });
 
-test('nominations: one per user per category, duplicates group', () => {
-  assert.equal(nominateMoment(db, { categoryId: 'song', text: 'TOXIC', link: 'https://youtu.be/a', user: u(1) }), 'created');
-  assert.equal(nominateMoment(db, { categoryId: 'song', text: 'toxic!', user: u(2) }), 'created');
-  assert.equal(nominateMoment(db, { categoryId: 'song', text: 'Hands Up', user: u(3) }), 'created');
-  assert.equal(nominateMoment(db, { categoryId: 'song', text: 'Hands Up', user: u(1) }), 'updated');
-  const r = ranked(db, 'song');
+// Tests only ever use this in-memory server, never MONGO_URI from .env.
+let server;
+let db;
+test.before(async () => {
+  server = await MongoMemoryServer.create();
+  db = await open(server.getUri(), { dbName: 'services' });
+});
+test.after(async () => {
+  await db?.close();
+  await server?.stop();
+});
+
+test('database name comes from the URI, with a safe default', () => {
+  assert.equal(resolveDbName('mongodb+srv://u:p@cluster.example.net/?retryWrites=true'), DEFAULT_DB_NAME);
+  assert.equal(resolveDbName('mongodb+srv://u:p@cluster.example.net'), DEFAULT_DB_NAME);
+  assert.equal(resolveDbName('mongodb://a:1,b:2/mine?replicaSet=x'), 'mine');
+});
+
+test('nominations: one per user per category, duplicates group', async () => {
+  assert.equal(await nominateMoment(db, { categoryId: 'song', text: 'TOXIC', link: 'https://youtu.be/a', user: u(1) }), 'created');
+  assert.equal(await nominateMoment(db, { categoryId: 'song', text: 'toxic!', user: u(2) }), 'created');
+  assert.equal(await nominateMoment(db, { categoryId: 'song', text: 'Hands Up', user: u(3) }), 'created');
+  assert.equal(await nominateMoment(db, { categoryId: 'song', text: 'Hands Up', user: u(1) }), 'updated');
+  const r = await ranked(db, 'song');
   assert.deepEqual(r.map((n) => [n.norm, n.count]), [['hands up', 2], ['toxic', 1]]);
 });
 
-test('merge/rename/exclude overrides feed poll options', () => {
-  nominateMoment(db, { categoryId: 'mv', text: 'Toxic MV', user: u(1) });
-  nominateMoment(db, { categoryId: 'mv', text: 'TOXIC', user: u(2) });
-  nominateMoment(db, { categoryId: 'mv', text: 'spam', user: u(3) });
-  nominateMoment(db, { categoryId: 'mv', text: 'Hands Up', user: u(4) });
-  db.mergeNominees('mv', 'toxic mv', 'toxic');
-  db.setOverride('mv', 'spam', { excluded: true });
-  db.setOverride('mv', 'toxic', { display: 'TOXIC', link: 'https://youtu.be/toxic' });
-  const { options } = pollOptions(db, 'mv');
-  assert.deepEqual(options.map((o) => o.text), ['TOXIC', 'Hands Up']);
-  assert.equal(options[0].link, 'https://youtu.be/toxic');
-  db.setOverride('mv', 'spam', { excluded: false });
-  assert.equal(pollOptions(db, 'mv').options.length, 3);
+test('song nominations must come from the fixed list and are normalised to it', async () => {
+  await assert.rejects(nominateMoment(db, { categoryId: 'song', text: 'Some Other Song', user: u(7) }), /from the list/);
+  await nominateMoment(db, { categoryId: 'song', text: 'drop top!', user: u(7) });
+  const mine = await db.nominationsByUser('u7');
+  assert.equal(mine[0].value, 'DROP TOP');
+  assert.equal(config.event.songs.length, 16);
+  await db.deleteNomination('song', 'u7');
 });
 
-test('superlative polls list all members; review polls pool sources', () => {
-  nominateMember(db, { categoryId: 'best-dressed', memberId: 'anna', user: u(1) });
-  assert.equal(pollOptions(db, 'best-dressed').options.length, config.event.members.length);
-  const review = pollOptions(db, 'most-played');
-  assert.deepEqual(review.options.map((o) => o.text), ['Hands Up', 'toxic!']);
+test('staff can wipe one fan', async () => {
+  await nominateMoment(db, { categoryId: 'mv', text: 'spam spam', user: u(8) });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'ella', user: u(8) });
+  assert.equal(await db.deleteNominationsByUser('u8'), 2);
+  assert.equal((await db.nominationsByUser('u8')).length, 0);
+});
+
+test('simultaneous nominations from one fan leave a single nomination', async () => {
+  await Promise.all(Array.from({ length: 8 }, () => nominateMoment(db, { categoryId: 'choreo', text: 'TOXIC', user: u(9) })));
+  assert.equal((await db.nominationsFor('choreo')).length, 1);
+});
+
+test('merge/rename/exclude overrides feed poll options', async () => {
+  await nominateMoment(db, { categoryId: 'mv', text: 'Toxic MV', user: u(1) });
+  await nominateMoment(db, { categoryId: 'mv', text: 'TOXIC', user: u(2) });
+  await nominateMoment(db, { categoryId: 'mv', text: 'spam', user: u(3) });
+  await nominateMoment(db, { categoryId: 'mv', text: 'Hands Up', user: u(4) });
+  await db.mergeNominees('mv', 'toxic mv', 'toxic');
+  await db.setOverride('mv', 'spam', { excluded: true });
+  await db.setOverride('mv', 'toxic', { display: 'TOXIC' });
+  await db.setOverride('mv', 'toxic', { link: 'https://youtu.be/toxic' });
+  const { options } = await pollOptions(db, 'mv');
+  assert.deepEqual(options.map((o) => o.text), ['TOXIC', 'Hands Up']);
+  assert.equal(options[0].link, 'https://youtu.be/toxic');
+  await db.setOverride('mv', 'spam', { excluded: false });
+  assert.equal((await pollOptions(db, 'mv')).options.length, 3);
+});
+
+test('superlative polls list all members; review polls pool sources', async () => {
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'anna', user: u(1) });
+  assert.equal((await pollOptions(db, 'best-dressed')).options.length, config.event.members.length);
+  const review = await pollOptions(db, 'most-played');
+  assert.deepEqual(review.options.map((o) => o.text), ['HANDS UP', 'TOXIC']);
   assert.ok(review.note);
 });
 
-test('memories + yearbook compile', () => {
-  const { id } = db.upsertMemory({ userId: 'u1', userName: 'Fan 1', text: 'Seeing them live <3' });
-  db.upsertMemory({ userId: 'u2', userName: 'Fan 2', text: 'The GO HARD stage' });
-  db.updateMemory(id, { featured: true, anonymous: true });
-  db.savePoll({ pollKey: 'best-dressed', kind: 'superlative', question: 'Best Dressed', options: [], channelId: 'c', messageId: 'm', postedAt: 1, endsAt: 2 });
-  db.saveResults('best-dressed', [{ text: 'ANNA', votes: 10 }, { text: 'ELLA', votes: 4 }]);
-  const book = yearbook.compile(db);
+test('withdrawing a nomination and the staff counts', async () => {
+  await nominateMoment(db, { categoryId: 'looks', text: 'Red carpet', user: u(5) });
+  assert.equal(await db.deleteNomination('looks', u(5).id), 1);
+  assert.equal(await db.deleteNomination('looks', u(5).id), 0);
+  const song = (await db.nominationCounts()).find((c) => c.category_id === 'song');
+  assert.deepEqual([song.n, song.nominees], [3, 2]);
+  assert.ok((await db.nominatorCount()) >= 4);
+});
+
+test('memories + yearbook compile', async () => {
+  const { id } = await db.upsertMemory({ userId: 'u1', userName: 'Fan 1', text: 'Seeing them live <3' });
+  const second = await db.upsertMemory({ userId: 'u2', userName: 'Fan 2', text: 'The GO HARD stage' });
+  assert.equal(second.id, id + 1, 'response numbers are sequential');
+  await db.updateMemory(id, { featured: true, anonymous: true });
+  assert.deepEqual(await db.countMemories(), { total: 2, featured: 1 });
+  const edited = await db.upsertMemory({ userId: 'u2', userName: 'Fan 2', text: 'Edited' });
+  assert.deepEqual(edited, { id: second.id, status: 'updated' });
+  await db.savePoll({ pollKey: 'best-dressed', kind: 'superlative', question: 'Best Dressed', options: [], channelId: 'c', messageId: 'm', postedAt: 1, endsAt: 2 });
+  await db.saveResults('best-dressed', [{ text: 'ANNA', votes: 10 }, { text: 'ELLA', votes: 4 }]);
+  const book = await yearbook.compile(db);
   const bd = book.superlatives.find((e) => e.id === 'best-dressed');
   assert.equal(bd.winners[0].text, 'ANNA');
   assert.equal(book.memories.length, 1);
@@ -60,6 +116,67 @@ test('memories + yearbook compile', () => {
   const embeds = yearbook.toEmbeds(book);
   assert.ok(embeds.length >= 4);
   for (const e of embeds) e.toJSON();
+});
+
+test('the event waits for the staff command, then runs from that point', async () => {
+  const eventDb = await open(server.getUri(), { dbName: 'manual-start' });
+  try {
+    const sent = [];
+    const channel = {
+      id: 'c',
+      async send(message) {
+        sent.push(message);
+        return { id: `m${sent.length}`, url: `https://discord.test/${sent.length}`, poll: null };
+      },
+    };
+    const client = { channels: { fetch: async () => channel } };
+    const ctx = { db: eventDb, client };
+    const log = async () => {};
+    const replies = [];
+    const record = async (r) => { replies.push(typeof r === 'string' ? r : r.content); };
+    const interaction = (options) => ({
+      client,
+      user: { id: 'fan', username: 'fan' },
+      memberPermissions: { has: () => true },
+      options: {
+        getSubcommandGroup: () => options.group ?? null,
+        getSubcommand: () => options.sub,
+        getString: (name) => options[name] ?? null,
+      },
+      reply: record,
+      editReply: record,
+      deferReply: async () => {},
+    });
+    const nominateFan = () => nominate.execute(interaction({ sub: 'moment', category: 'song', nomination: 'TOXIC' }), ctx);
+    const runStart = () => yb.execute(interaction({ group: 'schedule', sub: 'run', key: START_JOB }), ctx);
+
+    // Before the command: nothing posts, nothing is recorded, fans can't nominate.
+    await scheduler.tick(ctx, log);
+    assert.equal(sent.length, 0);
+    assert.equal((await eventDb.allJobs()).size, 0);
+    await nominateFan();
+    assert.match(replies.at(-1), /haven’t opened/);
+    assert.equal((await eventDb.nominationsFor('song')).length, 0);
+
+    // The command posts the announcement once and opens nominations.
+    await runStart();
+    assert.equal(sent.length, 1);
+    assert.equal((await eventDb.jobStatus(START_JOB)).status, 'done');
+    await nominateFan();
+    assert.match(replies.at(-1), /Nominated/);
+    assert.equal((await eventDb.nominationsFor('song')).length, 1);
+
+    // Later passes and a second command don't repeat the announcement.
+    await scheduler.tick(ctx, log);
+    const afterTick = sent.length;
+    await scheduler.tick(ctx, log);
+    await runStart();
+    assert.match(replies.at(-1), /already started/);
+    assert.equal(sent.length, afterTick);
+    assert.equal(sent.filter((m) => m.embeds?.[0]?.data.title?.startsWith('📸')).length, 1);
+  } finally {
+    await eventDb.close();
+  }
 });
 
 test('announcements and command definitions are valid', () => {

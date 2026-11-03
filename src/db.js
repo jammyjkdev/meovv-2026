@@ -1,208 +1,228 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const Database = require('better-sqlite3');
+const { MongoClient } = require('mongodb');
+const log = require('./lib/log')('db');
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS nominations (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  category_id TEXT NOT NULL,
-  user_id     TEXT NOT NULL,
-  user_name   TEXT NOT NULL,
-  value       TEXT NOT NULL,          -- display text (member name for superlatives)
-  norm        TEXT NOT NULL,          -- grouping key (member id for superlatives)
-  link        TEXT,
-  reason      TEXT,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  UNIQUE (category_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_nominations_cat ON nominations (category_id, norm);
+// Used when MONGO_URI doesn't name a database (Mongo would otherwise fall back to "test").
+const DEFAULT_DB_NAME = 'meovv-yearbook';
+const DUPLICATE_KEY = 11000;
 
--- Staff edits to a nominee: canonical name, canonical link, or excluded from finals.
-CREATE TABLE IF NOT EXISTS nominee_overrides (
-  category_id TEXT NOT NULL,
-  norm        TEXT NOT NULL,
-  display     TEXT,
-  link        TEXT,
-  excluded    INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (category_id, norm)
-);
-
-CREATE TABLE IF NOT EXISTS polls (
-  poll_key    TEXT PRIMARY KEY,       -- category id
-  kind        TEXT NOT NULL,          -- superlative | nomination | review | custom
-  question    TEXT NOT NULL,
-  options     TEXT NOT NULL,          -- JSON [{text, link, emoji}]
-  channel_id  TEXT NOT NULL,
-  message_id  TEXT NOT NULL,
-  posted_at   INTEGER NOT NULL,
-  ends_at     INTEGER NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'open', -- open | closed
-  results     TEXT                    -- JSON [{text, votes}]
-);
-
-CREATE TABLE IF NOT EXISTS memories (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id     TEXT NOT NULL UNIQUE,
-  user_name   TEXT NOT NULL,
-  text        TEXT NOT NULL,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  featured    INTEGER NOT NULL DEFAULT 0,
-  anonymous   INTEGER NOT NULL DEFAULT 0,
-  removed     INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS jobs (
-  key         TEXT PRIMARY KEY,
-  status      TEXT NOT NULL,          -- done | skipped | failed
-  detail      TEXT,
-  at          INTEGER NOT NULL
-);
-`;
-
-function open(file) {
-  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.exec(SCHEMA);
-  return createRepo(db);
+/** The database named in a Mongo connection string, or the bot's default if there isn't one. */
+function resolveDbName(uri) {
+  const match = /^mongodb(?:\+srv)?:\/\/[^/]+\/([^?]*)/.exec(uri);
+  return match?.[1] ? decodeURIComponent(match[1]) : DEFAULT_DB_NAME;
 }
 
-function createRepo(db) {
-  const now = () => Date.now();
-  const json = (v) => (v == null ? null : JSON.parse(v));
+/** Concurrent upserts on the same unique key can collide; the retry then finds the existing doc. */
+async function retryOnDuplicate(write) {
+  try {
+    return await write();
+  } catch (err) {
+    if (err.code !== DUPLICATE_KEY) throw err;
+    return write();
+  }
+}
 
-  const repo = {
-    raw: db,
+/** Connect, ensure indexes exist and return the repository used by the rest of the bot. */
+async function open(uri, { dbName = resolveDbName(uri) } = {}) {
+  const client = new MongoClient(uri);
+  await client.connect();
+  const database = client.db(dbName);
+  log.info('Connected to MongoDB', { host: uri.replace(/\/\/.*?@/, '//'), database: dbName });
+  client.on('serverHeartbeatFailed', (e) => log.warn('MongoDB heartbeat failed', { err: e.failure?.message }));
+  client.on('topologyClosed', () => log.info('MongoDB connection closed'));
+  const col = {
+    nominations: database.collection('yearbook_nominations'),
+    overrides: database.collection('yearbook_nominee_overrides'),
+    polls: database.collection('yearbook_polls'),
+    memories: database.collection('yearbook_memories'),
+    jobs: database.collection('yearbook_jobs'),
+    counters: database.collection('yearbook_counters'),
+  };
+  await Promise.all([
+    col.nominations.createIndex({ category_id: 1, user_id: 1 }, { unique: true }),
+    col.nominations.createIndex({ category_id: 1, norm: 1 }),
+    col.nominations.createIndex({ user_id: 1 }),
+    col.overrides.createIndex({ category_id: 1, norm: 1 }, { unique: true }),
+    col.polls.createIndex({ poll_key: 1 }, { unique: true }),
+    col.polls.createIndex({ status: 1, ends_at: 1 }),
+    col.memories.createIndex({ id: 1 }, { unique: true }),
+    col.memories.createIndex({ user_id: 1 }, { unique: true }),
+    col.jobs.createIndex({ key: 1 }, { unique: true }),
+  ]);
+  log.debug('Indexes ready');
+  return createRepo(client, col);
+}
+
+function createRepo(client, col) {
+  const now = () => Date.now();
+
+  /** Short sequential number, so staff can type `/yb memories feature id:12`. */
+  async function nextMemoryId() {
+    const doc = await col.counters.findOneAndUpdate(
+      { _id: 'memories' },
+      { $inc: { value: 1 } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    return doc.value;
+  }
+
+  return {
+    close: () => client.close(),
 
     // ── nominations ───────────────────────────────────────────────
     /** Insert or replace a user's nomination for a category. Returns 'created' | 'updated'. */
-    upsertNomination({ categoryId, userId, userName, value, norm, link = null, reason = null }) {
-      const existing = db.prepare('SELECT id FROM nominations WHERE category_id = ? AND user_id = ?').get(categoryId, userId);
-      if (existing) {
-        db.prepare('UPDATE nominations SET user_name = ?, value = ?, norm = ?, link = ?, reason = ?, updated_at = ? WHERE id = ?')
-          .run(userName, value, norm, link, reason, now(), existing.id);
-        return 'updated';
-      }
-      db.prepare(`INSERT INTO nominations (category_id, user_id, user_name, value, norm, link, reason, created_at, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(categoryId, userId, userName, value, norm, link, reason, now(), now());
-      return 'created';
+    async upsertNomination({ categoryId, userId, userName, value, norm, link = null, reason = null }) {
+      const t = now();
+      const res = await retryOnDuplicate(() =>
+        col.nominations.updateOne(
+          { category_id: categoryId, user_id: userId },
+          { $set: { user_name: userName, value, norm, link, reason, updated_at: t }, $setOnInsert: { created_at: t } },
+          { upsert: true },
+        ),
+      );
+      const status = res.upsertedCount ? 'created' : 'updated';
+      log.debug(`nomination ${status}`, { category: categoryId, user: userId, norm });
+      return status;
     },
     nominationsFor(categoryId) {
-      return db.prepare('SELECT * FROM nominations WHERE category_id = ? ORDER BY created_at').all(categoryId);
+      return col.nominations.find({ category_id: categoryId }).sort({ created_at: 1 }).toArray();
     },
     nominationsByUser(userId) {
-      return db.prepare('SELECT * FROM nominations WHERE user_id = ? ORDER BY category_id').all(userId);
+      return col.nominations.find({ user_id: userId }).sort({ category_id: 1 }).toArray();
     },
-    deleteNomination(categoryId, userId) {
-      return db.prepare('DELETE FROM nominations WHERE category_id = ? AND user_id = ?').run(categoryId, userId).changes;
+    async deleteNomination(categoryId, userId) {
+      return (await col.nominations.deleteOne({ category_id: categoryId, user_id: userId })).deletedCount;
+    },
+    /** Remove everything a user nominated (spam / ineligible accounts). */
+    async deleteNominationsByUser(userId) {
+      return (await col.nominations.deleteMany({ user_id: userId })).deletedCount;
     },
     nominationCounts() {
-      return db.prepare('SELECT category_id, COUNT(*) AS n, COUNT(DISTINCT norm) AS nominees FROM nominations GROUP BY category_id').all();
+      return col.nominations
+        .aggregate([
+          { $group: { _id: '$category_id', n: { $sum: 1 }, norms: { $addToSet: '$norm' } } },
+          { $project: { _id: 0, category_id: '$_id', n: 1, nominees: { $size: '$norms' } } },
+        ])
+        .toArray();
     },
-    nominatorCount() {
-      return db.prepare('SELECT COUNT(DISTINCT user_id) AS n FROM nominations').get().n;
+    async nominatorCount() {
+      return (await col.nominations.distinct('user_id')).length;
     },
     /** Merge nominee `fromNorm` into `toNorm` within a category. */
-    mergeNominees(categoryId, fromNorm, toNorm) {
-      return db.transaction(() => {
-        const n = db.prepare('UPDATE nominations SET norm = ? WHERE category_id = ? AND norm = ?').run(toNorm, categoryId, fromNorm).changes;
-        db.prepare('DELETE FROM nominee_overrides WHERE category_id = ? AND norm = ?').run(categoryId, fromNorm);
-        return n;
-      })();
+    async mergeNominees(categoryId, fromNorm, toNorm) {
+      const res = await col.nominations.updateMany({ category_id: categoryId, norm: fromNorm }, { $set: { norm: toNorm } });
+      await col.overrides.deleteOne({ category_id: categoryId, norm: fromNorm });
+      return res.modifiedCount;
     },
-    overridesFor(categoryId) {
-      const rows = db.prepare('SELECT * FROM nominee_overrides WHERE category_id = ?').all(categoryId);
+    async overridesFor(categoryId) {
+      const rows = await col.overrides.find({ category_id: categoryId }).toArray();
       return new Map(rows.map((r) => [r.norm, { display: r.display, link: r.link, excluded: Boolean(r.excluded) }]));
     },
-    setOverride(categoryId, norm, patch) {
-      const cur = db.prepare('SELECT * FROM nominee_overrides WHERE category_id = ? AND norm = ?').get(categoryId, norm) ?? {};
-      const next = {
-        display: 'display' in patch ? patch.display : cur.display ?? null,
-        link: 'link' in patch ? patch.link : cur.link ?? null,
-        excluded: 'excluded' in patch ? (patch.excluded ? 1 : 0) : cur.excluded ?? 0,
-      };
-      db.prepare(`INSERT INTO nominee_overrides (category_id, norm, display, link, excluded) VALUES (?, ?, ?, ?, ?)
-                  ON CONFLICT (category_id, norm) DO UPDATE SET display = excluded.display, link = excluded.link, excluded = excluded.excluded`)
-        .run(categoryId, norm, next.display, next.link, next.excluded);
+    async setOverride(categoryId, norm, patch) {
+      const defaults = { display: null, link: null, excluded: false };
+      const set = {};
+      for (const key of Object.keys(defaults)) {
+        if (key in patch) {
+          set[key] = key === 'excluded' ? Boolean(patch[key]) : patch[key];
+          delete defaults[key];
+        }
+      }
+      await retryOnDuplicate(() =>
+        col.overrides.updateOne({ category_id: categoryId, norm }, { $set: set, $setOnInsert: defaults }, { upsert: true }),
+      );
     },
 
     // ── polls ─────────────────────────────────────────────────────
-    savePoll({ pollKey, kind, question, options, channelId, messageId, postedAt, endsAt }) {
-      db.prepare(`INSERT INTO polls (poll_key, kind, question, options, channel_id, message_id, posted_at, ends_at, status, results)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL)
-                  ON CONFLICT (poll_key) DO UPDATE SET kind = excluded.kind, question = excluded.question, options = excluded.options,
-                    channel_id = excluded.channel_id, message_id = excluded.message_id, posted_at = excluded.posted_at,
-                    ends_at = excluded.ends_at, status = 'open', results = NULL`)
-        .run(pollKey, kind, question, JSON.stringify(options), channelId, messageId, postedAt, endsAt);
+    async savePoll({ pollKey, kind, question, options, channelId, messageId, postedAt, endsAt }) {
+      const doc = {
+        poll_key: pollKey,
+        kind,
+        question,
+        options,
+        channel_id: channelId,
+        message_id: messageId,
+        posted_at: postedAt,
+        ends_at: endsAt,
+        status: 'open',
+        results: null,
+      };
+      await retryOnDuplicate(() => col.polls.replaceOne({ poll_key: pollKey }, doc, { upsert: true }));
     },
     getPoll(pollKey) {
-      const r = db.prepare('SELECT * FROM polls WHERE poll_key = ?').get(pollKey);
-      return r && { ...r, options: json(r.options), results: json(r.results) };
+      return col.polls.findOne({ poll_key: pollKey });
     },
     allPolls() {
-      return db.prepare('SELECT * FROM polls ORDER BY posted_at').all().map((r) => ({ ...r, options: json(r.options), results: json(r.results) }));
+      return col.polls.find().sort({ posted_at: 1 }).toArray();
     },
     pollsDue(nowMs) {
-      return db.prepare("SELECT * FROM polls WHERE status = 'open' AND ends_at <= ?").all(nowMs).map((r) => ({ ...r, options: json(r.options) }));
+      return col.polls.find({ status: 'open', ends_at: { $lte: nowMs } }).toArray();
     },
-    saveResults(pollKey, results, status = 'closed') {
-      db.prepare('UPDATE polls SET results = ?, status = ? WHERE poll_key = ?').run(JSON.stringify(results), status, pollKey);
+    async saveResults(pollKey, results, status = 'closed') {
+      await col.polls.updateOne({ poll_key: pollKey }, { $set: { results, status } });
     },
-    setPollEndsAt(pollKey, endsAt) {
-      db.prepare('UPDATE polls SET ends_at = ? WHERE poll_key = ?').run(endsAt, pollKey);
+    async setPollEndsAt(pollKey, endsAt) {
+      await col.polls.updateOne({ poll_key: pollKey }, { $set: { ends_at: endsAt } });
     },
 
     // ── memories ──────────────────────────────────────────────────
-    upsertMemory({ userId, userName, text }) {
-      const existing = db.prepare('SELECT id FROM memories WHERE user_id = ?').get(userId);
-      if (existing) {
-        db.prepare('UPDATE memories SET user_name = ?, text = ?, updated_at = ?, removed = 0 WHERE id = ?').run(userName, text, now(), existing.id);
-        return { id: existing.id, status: 'updated' };
+    async upsertMemory({ userId, userName, text }) {
+      const update = async () => {
+        const doc = await col.memories.findOneAndUpdate(
+          { user_id: userId },
+          { $set: { user_name: userName, text, updated_at: now(), removed: false } },
+        );
+        return doc && { id: doc.id, status: 'updated' };
+      };
+      const updated = await update();
+      if (updated) return updated;
+
+      const id = await nextMemoryId();
+      const t = now();
+      try {
+        await col.memories.insertOne({ id, user_id: userId, user_name: userName, text, created_at: t, updated_at: t, featured: false, anonymous: false, removed: false });
+        return { id, status: 'created' };
+      } catch (err) {
+        if (err.code !== DUPLICATE_KEY) throw err;
+        return update(); // the same fan submitted twice at once
       }
-      const info = db.prepare('INSERT INTO memories (user_id, user_name, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-        .run(userId, userName, text, now(), now());
-      return { id: Number(info.lastInsertRowid), status: 'created' };
     },
     memoryByUser(userId) {
-      return db.prepare('SELECT * FROM memories WHERE user_id = ? AND removed = 0').get(userId);
+      return col.memories.findOne({ user_id: userId, removed: false });
     },
     getMemory(id) {
-      return db.prepare('SELECT * FROM memories WHERE id = ?').get(id);
+      return col.memories.findOne({ id });
     },
     listMemories({ featuredOnly = false, limit = 10, offset = 0 } = {}) {
-      const where = featuredOnly ? 'removed = 0 AND featured = 1' : 'removed = 0';
-      return db.prepare(`SELECT * FROM memories WHERE ${where} ORDER BY featured DESC, created_at LIMIT ? OFFSET ?`).all(limit, offset);
+      const filter = featuredOnly ? { removed: false, featured: true } : { removed: false };
+      return col.memories.find(filter).sort({ featured: -1, created_at: 1, id: 1 }).skip(offset).limit(limit).toArray();
     },
-    countMemories() {
-      return db.prepare('SELECT COUNT(*) AS total, SUM(featured) AS featured FROM memories WHERE removed = 0').get();
+    async countMemories() {
+      const [total, featured] = await Promise.all([
+        col.memories.countDocuments({ removed: false }),
+        col.memories.countDocuments({ removed: false, featured: true }),
+      ]);
+      return { total, featured };
     },
-    updateMemory(id, patch) {
-      const fields = Object.keys(patch);
-      if (!fields.length) return 0;
-      const set = fields.map((f) => `${f} = ?`).join(', ');
-      return db.prepare(`UPDATE memories SET ${set} WHERE id = ?`).run(...fields.map((f) => (typeof patch[f] === 'boolean' ? Number(patch[f]) : patch[f])), id).changes;
+    async updateMemory(id, patch) {
+      if (!Object.keys(patch).length) return 0;
+      return (await col.memories.updateOne({ id }, { $set: patch })).matchedCount;
     },
 
     // ── scheduled jobs ────────────────────────────────────────────
     jobStatus(key) {
-      return db.prepare('SELECT * FROM jobs WHERE key = ?').get(key);
+      return col.jobs.findOne({ key });
     },
-    allJobs() {
-      return new Map(db.prepare('SELECT * FROM jobs').all().map((r) => [r.key, r]));
+    async allJobs() {
+      const rows = await col.jobs.find().toArray();
+      return new Map(rows.map((r) => [r.key, r]));
     },
-    markJob(key, status, detail = null) {
-      db.prepare(`INSERT INTO jobs (key, status, detail, at) VALUES (?, ?, ?, ?)
-                  ON CONFLICT (key) DO UPDATE SET status = excluded.status, detail = excluded.detail, at = excluded.at`)
-        .run(key, status, detail, now());
+    async markJob(key, status, detail = null) {
+      await retryOnDuplicate(() => col.jobs.updateOne({ key }, { $set: { status, detail, at: now() } }, { upsert: true }));
+      log.debug('job marked', { key, status });
     },
-    resetJob(key) {
-      db.prepare('DELETE FROM jobs WHERE key = ?').run(key);
+    async resetJob(key) {
+      await col.jobs.deleteOne({ key });
     },
   };
-  return repo;
 }
 
-module.exports = { open };
+module.exports = { open, resolveDbName, DEFAULT_DB_NAME };

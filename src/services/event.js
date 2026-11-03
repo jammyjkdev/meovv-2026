@@ -35,6 +35,13 @@ function currentPhase(now = config.now()) {
   return 'revealed';
 }
 
+/** Staff start the event by running this scheduled job with `/yb schedule run`. */
+const START_JOB = 'announce:nominations';
+
+async function hasStarted(db) {
+  return (await db.jobStatus(START_JOB))?.status === 'done';
+}
+
 function nominationsOpen(now = config.now()) {
   return currentPhase(now) === 'nominations';
 }
@@ -61,4 +68,4 @@ function ts(dt, style = 'F') {
   return `<t:${Math.floor(dt.toSeconds())}:${style}>`;
 }
 
-module.exports = { allCategories, findCategory, findMember, currentPhase, nominationsOpen, memoriesOpen, PHASE_LABELS, ts };
+module.exports = { allCategories, findCategory, findMember, currentPhase, nominationsOpen, memoriesOpen, PHASE_LABELS, ts, START_JOB, hasStarted };

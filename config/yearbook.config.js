@@ -8,8 +8,29 @@
  * Restart the bot after editing. Re-run `npm run deploy` if you change categories
  * or members (they're baked into slash-command choices).
  */
+// Every MEOVV song released so far, oldest first. Fans pick from this list for song categories.
+const SONGS = [
+  'MEOW',
+  'TOXIC',
+  'BODY',
+  'DROP TOP',
+  'HANDS UP',
+  'LIT RIGHT NOW',
+  'ME ME ME',
+  'BURNING UP',
+  'BURNING UP (Rush Remix)',
+  'DDI RO RI',
+  "Hit 'Em",
+  'In my hands',
+  'Favorite Song',
+  'Revenge',
+  'GO HARD',
+  'Indestructible',
+];
+
 module.exports = {
   eventName: 'MEOVV 2026 Yearbook',
+  songs: SONGS,
   timezone: 'America/New_York',
 
   // Accent colour for embeds (hex number).
@@ -25,7 +46,7 @@ module.exports = {
 
   phases: {
     // WEEK 1 — nominations are accepted between start and end.
-    nominations: { start: '2026-11-02T10:00', end: '2026-11-08T23:59' },
+    nominations: { start: '2026-11-03T10:00', end: '2026-11-08T23:59' },
     // WEEK 2 — superlative + 2026 nomination polls are spread across these days.
     voting: { start: '2026-11-09T10:00', end: '2026-11-15T23:59' },
     // WEEK 3 — "What MEOVV moment made your 2026?" + retrospective polls.
@@ -68,8 +89,9 @@ module.exports = {
 
   // WEEK 1 → WEEK 2: fans nominate content/moments (free text + optional link).
   // `section` decides where the winner lands in the yearbook: 'favorites' or 'moments'.
+  // `choices` limits a category to a fixed list (autocomplete only offers these).
   nominationCategories: [
-    { id: 'song', title: 'Favorite MEOVV Song', section: 'favorites', hint: 'Song title' },
+    { id: 'song', title: 'Favorite MEOVV Song', section: 'favorites', hint: 'Song title', choices: SONGS },
     { id: 'mv', title: 'Favorite Music Video', section: 'favorites', hint: 'MV title' },
     { id: 'performance', title: 'Favorite Performance', section: 'favorites', hint: 'e.g. song + show/stage' },
     { id: 'choreography', title: 'Favorite Choreography', section: 'favorites', hint: 'Song / dance' },

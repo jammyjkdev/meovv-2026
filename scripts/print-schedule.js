@@ -1,6 +1,6 @@
-/** Print the automatic schedule from config/yearbook.config.js — `npm run schedule` */
+/** Print the automatic schedule from config/yearbook.config.js and TZ in .env — `npm run schedule` */
 const { buildPlan } = require('../src/lib/plan');
-const cfg = require('../config/yearbook.config.js');
+const { event: cfg } = require('../src/config');
 
 for (const j of buildPlan(cfg)) {
   const what = j.type === 'poll' ? `${j.payload.kind.padEnd(11)} ${j.payload.pollKey}` : j.type;

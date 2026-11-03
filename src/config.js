@@ -9,6 +9,9 @@ try {
 
 const event = require('../config/yearbook.config.js');
 
+// TZ in .env sets the event timezone; every date in the config is read in this zone.
+if (process.env.TZ) event.timezone = process.env.TZ;
+
 /** Parse a local date/time string from the config into a luxon DateTime in the event timezone. */
 function at(value, zone = event.timezone) {
   const dt = DateTime.fromISO(value, { zone });
@@ -55,16 +58,17 @@ function now() {
 }
 
 const env = {
-  token: process.env.DISCORD_TOKEN,
-  clientId: process.env.DISCORD_CLIENT_ID,
+  token: process.env.BOT_TOKEN,
+  ownerId: process.env.BOT_OWNER_ID || null,
   guildId: process.env.GUILD_ID,
+  mongoUri: process.env.MONGO_URI,
   announceChannelId: process.env.ANNOUNCE_CHANNEL_ID,
   pollChannelId: process.env.POLL_CHANNEL_ID,
   yearbookChannelId: process.env.YEARBOOK_CHANNEL_ID,
   logChannelId: process.env.LOG_CHANNEL_ID,
   pingRoleId: process.env.PING_ROLE_ID || null,
   adminRoleId: process.env.ADMIN_ROLE_ID || null,
-  databasePath: process.env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'yearbook.db'),
+  dataDir: path.join(__dirname, '..', 'data'),
   rehearsal: Boolean(process.env.YEARBOOK_NOW),
 };
 

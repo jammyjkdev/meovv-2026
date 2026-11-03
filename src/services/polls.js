@@ -5,6 +5,7 @@ const { truncate } = require('../lib/text');
 const { findCategory, ts } = require('./event');
 const { pollOptions } = require('./nominations');
 const { DateTime } = require('luxon');
+const log_ = require('../lib/log')('polls');
 
 const SECTION_HEADERS = {
   superlatives: '🏆 Member Superlatives',
@@ -47,12 +48,12 @@ async function postPoll(ctx, pollKey, opts = {}) {
   const cat = findCategory(pollKey);
   if (!cat) return { posted: false, reason: `Unknown or disabled category \`${pollKey}\`.` };
 
-  const existing = db.getPoll(pollKey);
+  const existing = await db.getPoll(pollKey);
   if (existing && !opts.force) {
     return { posted: false, reason: `A poll for **${cat.title}** was already posted. Use \`force\` to post a new one (the old results will be replaced).` };
   }
 
-  const built = opts.options ? { options: opts.options } : pollOptions(db, pollKey);
+  const built = opts.options ? { options: opts.options } : await pollOptions(db, pollKey);
   const options = built.options.slice(0, 10);
   if (options.length < 2) {
     return { posted: false, reason: `**${cat.title}** has only ${options.length} eligible option(s) — need at least 2. Add options with \`/yb poll post options:\` or check nominations.` };
@@ -72,7 +73,7 @@ async function postPoll(ctx, pollKey, opts = {}) {
     allowedMentions: { roles: config.env.pingRoleId ? [config.env.pingRoleId] : [] },
   });
 
-  db.savePoll({
+  await db.savePoll({
     pollKey,
     kind: cat.type,
     question: cat.title,
@@ -82,6 +83,7 @@ async function postPoll(ctx, pollKey, opts = {}) {
     postedAt: Date.now(),
     endsAt: message.poll?.expiresTimestamp ?? endsAt.toMillis(),
   });
+  log_.info(`posted poll ${pollKey}`, { options: options.length, hours: duration, url: message.url });
   return { posted: true, url: message.url, note: built.note };
 }
 
@@ -110,17 +112,21 @@ function formatResults(title, answers) {
 
 /** Collect results of every poll whose time is up. Called from the scheduler. */
 async function closeDuePolls(ctx, log) {
-  for (const poll of ctx.db.pollsDue(Date.now())) {
+  for (const poll of await ctx.db.pollsDue(Date.now())) {
     try {
       const { answers, finalized } = await fetchResults(ctx, poll);
       // Discord finalises counts shortly after expiry; give it up to 15 minutes.
-      if (!finalized && Date.now() < poll.ends_at + 15 * 60_000) continue;
-      ctx.db.saveResults(poll.poll_key, answers, 'closed');
+      if (!finalized && Date.now() < poll.ends_at + 15 * 60_000) {
+        log_.debug(`poll ${poll.poll_key} ended, waiting for Discord to finalise votes`);
+        continue;
+      }
+      await ctx.db.saveResults(poll.poll_key, answers, 'closed');
+      log_.info(`poll ${poll.poll_key} closed`, { votes: answers.reduce((n, a) => n + a.votes, 0), winner: pickWinners(answers).winners.map((w) => w.text).join(' & ') || 'none' });
       await log(`📊 Poll closed — results saved (keep it secret until the reveal 🤫)\n${formatResults(poll.question, answers)}`);
     } catch (err) {
-      console.error(`[polls] failed to collect ${poll.poll_key}`, err);
+      log_.error(`failed to collect results for ${poll.poll_key}`, err);
       if (Date.now() > poll.ends_at + 6 * 3600_000) {
-        ctx.db.saveResults(poll.poll_key, [], 'closed');
+        await ctx.db.saveResults(poll.poll_key, [], 'closed');
         await log(`⚠️ Could not read results for **${poll.question}** (${err.message}). Was the poll message deleted? Marked closed with no results.`);
       }
     }
@@ -129,7 +135,7 @@ async function closeDuePolls(ctx, log) {
 
 /** End a poll early. */
 async function endPoll(ctx, pollKey) {
-  const poll = ctx.db.getPoll(pollKey);
+  const poll = await ctx.db.getPoll(pollKey);
   if (!poll) return { ok: false, reason: 'No poll has been posted for that category yet.' };
   if (poll.status === 'closed') return { ok: false, reason: 'That poll is already closed.' };
   const channel = await ctx.client.channels.fetch(poll.channel_id);
@@ -138,7 +144,7 @@ async function endPoll(ctx, pollKey) {
   } catch (err) {
     if (!/expired/i.test(err.message)) throw err;
   }
-  ctx.db.setPollEndsAt(pollKey, Date.now());
+  await ctx.db.setPollEndsAt(pollKey, Date.now());
   return { ok: true };
 }
 

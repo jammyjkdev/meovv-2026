@@ -47,7 +47,7 @@ function phaseAnnouncement(phase) {
         [
           'This November we’re looking back on everything **MEOVV** gave us in 2026 — and you decide what goes in the yearbook.',
           '',
-          `**Week 1 · Nominations** — ${ts(at(p.nominations.start), 'D')} – ${ts(at(p.nominations.end), 'D')}`,
+          `**Week 1 · Nominations** — ${ts(config.now(), 'D')} – ${ts(at(p.nominations.end), 'D')}`,
           `**Week 2 · Voting** — ${ts(at(p.voting.start), 'D')} – ${ts(at(p.voting.end), 'D')}`,
           `**Week 3 · Year in Review** — ${ts(at(p.review.start), 'D')} – ${ts(at(p.review.end), 'D')}`,
           `**📖 Yearbook Reveal** — ${ts(at(p.reveal), 'F')}`,

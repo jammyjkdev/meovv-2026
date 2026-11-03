@@ -10,8 +10,8 @@ const { allCategories } = require('./event');
  * Compile everything into the yearbook data structure.
  * Sections: superlatives, favorites, moments, memories.
  */
-function compile(db) {
-  const polls = new Map(db.allPolls().map((p) => [p.poll_key, p]));
+async function compile(db) {
+  const polls = new Map((await db.allPolls()).map((p) => [p.poll_key, p]));
   const entry = (cat) => {
     const poll = polls.get(cat.id);
     const answers = poll?.results ?? null;
@@ -29,7 +29,7 @@ function compile(db) {
 
   const cats = allCategories();
   const section = (name) => cats.filter((c) => c.section === name).map(entry);
-  const memories = db.listMemories({ featuredOnly: true, limit: 500 }).map((m) => ({
+  const memories = (await db.listMemories({ featuredOnly: true, limit: 500 })).map((m) => ({
     id: m.id,
     author: m.anonymous ? 'A MEOVV fan' : m.user_name,
     text: m.text,
@@ -161,7 +161,7 @@ ${memories}
 
 /** Write HTML + JSON exports to disk and return Discord attachments for them. */
 function exportFiles(book) {
-  const dir = path.join(path.dirname(config.env.databasePath), 'yearbook');
+  const dir = path.join(config.env.dataDir, 'yearbook');
   fs.mkdirSync(dir, { recursive: true });
   const html = toHtml(book);
   const jsonText = JSON.stringify(book, null, 2);
@@ -175,7 +175,7 @@ function exportFiles(book) {
 
 /** Post the yearbook to the yearbook channel (embeds in batches of ≤10, total ≤6000 chars each). */
 async function publish(ctx) {
-  const book = compile(ctx.db);
+  const book = await compile(ctx.db);
   const channel = await ctx.client.channels.fetch(config.env.yearbookChannelId);
   const embeds = toEmbeds(book);
   const batches = [];
