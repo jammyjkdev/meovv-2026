@@ -24,13 +24,6 @@ function pollIntro(cat, options, endsAt) {
   } else {
     lines.push(`**${cat.title}** — vote below! 🗳️`);
   }
-  const linked = options.filter((o) => o.link);
-  if (linked.length) {
-    lines.push('', '**Revisit the nominees before you vote:**');
-    options.forEach((o) => {
-      if (o.link) lines.push(`• **${o.text}** — <${o.link}>`);
-    });
-  }
   lines.push('', `Poll closes ${ts(endsAt, 'R')} (${ts(endsAt, 'f')}).`);
   if (config.env.pingRoleId) lines.push(`<@&${config.env.pingRoleId}>`);
   return truncate(lines.join('\n'), 2000);

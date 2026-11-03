@@ -65,7 +65,7 @@ function phaseAnnouncement(phase) {
       )
       .addFields(
         { name: '🏆 Member Superlatives — `/nominate member`', value: config.superlatives().map((c) => `• ${c.title}`).join('\n') },
-        { name: '💿 2026 Nominations — `/nominate moment`', value: `${config.nominationCategories().map((c) => `• ${c.title}`).join('\n')}\n\n*Add a link (YouTube, X, TikTok…) so everyone can rewatch it before voting!*` },
+        { name: '💿 2026 Nominations — `/nominate moment`', value: config.nominationCategories().map((c) => `• ${c.title}`).join('\n') },
       );
     return { content: ping, embeds: [intro, how] };
   }
@@ -77,7 +77,7 @@ function phaseAnnouncement(phase) {
       .setDescription(
         [
           'Your nominations are in — now it’s time to pick the winners! New polls drop **every day this week** in ' +
-            `<#${config.env.pollChannelId}>, so keep coming back. 💗`,
+            `<#${config.env.pollChannelId}>, so keep coming back. 🐈‍⬛`,
           '',
           'Where it helps, each poll links the nominated content so you can rewatch before voting.',
         ].join('\n'),
