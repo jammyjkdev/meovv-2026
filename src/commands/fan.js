@@ -10,7 +10,8 @@ const {
 const config = require('../config');
 const { clean, isHttpUrl, normalize, truncate } = require('../lib/text');
 const { findCategory, nominationsOpen, memoriesOpen, currentPhase, hasStarted, PHASE_LABELS, ts } = require('../services/event');
-const { nominateMember, nominateMoment, ranked, UserError } = require('../services/nominations');
+const { nominateMember, nominateMoment, ranked, matchChoice, UserError } = require('../services/nominations');
+const { entries: logEntry } = require('../services/staffLog');
 
 const MEMORY_MODAL_ID = 'memory:submit';
 const ephemeral = MessageFlags.Ephemeral;
@@ -98,7 +99,9 @@ const nominate = {
     if (sub === 'withdraw') {
       const categoryId = interaction.options.getString('category');
       const n = await ctx.db.deleteNomination(categoryId, user.id);
-      return interaction.reply({ content: n ? '🗑️ Nomination removed.' : 'You don’t have a nomination in that category.', flags: ephemeral });
+      await interaction.reply({ content: n ? '🗑️ Nomination removed.' : 'You don’t have a nomination in that category.', flags: ephemeral });
+      if (n) await logEntry.withdraw(interaction.client, { user, category: findCategory(categoryId)?.title ?? categoryId });
+      return;
     }
 
     const categoryId = interaction.options.getString('category');
@@ -111,20 +114,23 @@ const nominate = {
         const why = clean(interaction.options.getString('why') ?? '');
         const result = await nominateMember(ctx.db, { categoryId, memberId, user, reason: why });
         const member = config.event.members.find((m) => m.id === memberId);
-        return interaction.reply({
+        await interaction.reply({
           content: `${result === 'updated' ? '🔁 Updated!' : '✅ Nominated!'} **${member.name}** for **${cat.title}**.${why ? `\n> ${why}` : ''}`,
           flags: ephemeral,
         });
+        return logEntry.member(interaction.client, { user, category: cat.title, member: member.name, reason: why, status: result });
       }
 
-      const text = clean(interaction.options.getString('nomination'));
+      const typed = clean(interaction.options.getString('nomination'));
       const link = clean(interaction.options.getString('link') ?? '');
       if (link && !isHttpUrl(link)) return interaction.reply({ content: 'That link doesn’t look right — it should start with `https://`.', flags: ephemeral });
-      const result = await nominateMoment(ctx.db, { categoryId, text, link, user });
-      return interaction.reply({
+      const result = await nominateMoment(ctx.db, { categoryId, text: typed, link, user });
+      const text = matchChoice(cat, typed) ?? typed; // songs show their official title
+      await interaction.reply({
         content: `${result === 'updated' ? '🔁 Updated!' : '✅ Nominated!'} **${text}** for **${cat.title}**.${link ? `\n🔗 <${link}>` : ''}\nThe most-nominated picks move on to final voting! 🗳️`,
         flags: ephemeral,
       });
+      return logEntry.moment(interaction.client, { user, category: cat.title, text, link, status: result });
     } catch (err) {
       if (err instanceof UserError) return interaction.reply({ content: err.message, flags: ephemeral });
       throw err;
@@ -182,11 +188,12 @@ async function openMemoryModal(interaction, ctx) {
 async function submitMemory(interaction, ctx) {
   if (!memoriesOpen()) return interaction.reply({ content: 'Sorry — submissions just closed! 💗', flags: ephemeral });
   const text = interaction.fields.getTextInputValue('text').trim();
-  const { status } = await ctx.db.upsertMemory({ userId: interaction.user.id, userName: displayName(interaction), text });
-  return interaction.reply({
+  const { id, status } = await ctx.db.upsertMemory({ userId: interaction.user.id, userName: displayName(interaction), text });
+  await interaction.reply({
     content: `${status === 'updated' ? '🔁 Your response was updated' : '💌 Thank you for sharing'}! Some responses will be featured in the **${config.event.eventName}** on ${ts(config.at(config.event.phases.reveal), 'D')}.`,
     flags: ephemeral,
   });
+  return logEntry.memory(interaction.client, { user: interaction.user, id, text, status });
 }
 
 const moment = {

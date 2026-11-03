@@ -4,6 +4,7 @@ const { phaseAnnouncement, reminderMessage } = require('./announcements');
 const { postPoll, closeDuePolls } = require('./polls');
 const yearbook = require('./yearbook');
 const { START_JOB } = require('./event');
+const { staffLog } = require('./staffLog');
 const console_ = require('../lib/log')('scheduler');
 
 const TICK_MS = 60_000;
@@ -11,16 +12,7 @@ let waitingLogged = false;
 
 /** Send a message to the staff log channel (never throws). Also echoed to the console. */
 function makeLogger(client) {
-  return async (content) => {
-    console_.info(`staff log: ${content.replace(/\n/g, ' | ')}`);
-    if (!config.env.logChannelId) return;
-    try {
-      const ch = await client.channels.fetch(config.env.logChannelId);
-      for (let i = 0; i < content.length; i += 1900) await ch.send({ content: content.slice(i, i + 1900), allowedMentions: { parse: [] } });
-    } catch (err) {
-      console_.error('failed to post to the staff log channel', { channel: config.env.logChannelId, err });
-    }
-  };
+  return (content) => staffLog(client, content);
 }
 
 async function runJob(ctx, job, log) {

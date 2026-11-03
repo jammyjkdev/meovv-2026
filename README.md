@@ -48,7 +48,7 @@ Requires **Node.js 22+**.
 | `ANNOUNCE_CHANNEL_ID` | Phase announcements, reminders, and the "share your moment" button |
 | `POLL_CHANNEL_ID` | Daily yearbook polls |
 | `YEARBOOK_CHANNEL_ID` | Final reveal |
-| `LOG_CHANNEL_ID` | **Private staff channel.** Poll results, warnings and the reveal checklist. |
+| `LOG_CHANNEL_ID` | **Private staff channel.** Every fan entry as it happens (nominations, withdrawals, shared moments, with the fan tagged but not pinged), plus poll results, warnings and the reveal checklist. |
 | `PING_ROLE_ID` | *(optional)* Role pinged on announcements and polls |
 | `ADMIN_ROLE_ID` | *(optional)* Extra staff role for `/yb`. Also allow this role on `/yb` under Server Settings → Integrations, because by default `/yb` is only visible to members with Manage Server. |
 

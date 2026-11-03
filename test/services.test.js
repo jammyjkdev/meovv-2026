@@ -165,6 +165,11 @@ test('the event waits for the staff command, then runs from that point', async (
     await nominateFan();
     assert.match(replies.at(-1), /Nominated/);
     assert.equal((await eventDb.nominationsFor('song')).length, 1);
+    // every entry is reported to the staff log channel, tagging the fan without pinging
+    const entry = sent.find((m) => /nominated \*\*TOXIC\*\* for \*\*Favorite MEOVV Song\*\*/.test(m.content));
+    assert.ok(entry, 'staff log received the nomination');
+    assert.match(entry.content, /<@fan>/);
+    assert.deepEqual(entry.allowedMentions, { parse: [] });
 
     // Later passes and a second command don't repeat the announcement.
     await scheduler.tick(ctx, log);
