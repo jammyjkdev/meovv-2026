@@ -100,7 +100,7 @@ const data = () =>
     )
     .addSubcommandGroup((g) =>
       g.setName('yearbook').setDescription('Final yearbook')
-        .addSubcommand((s) => s.setName('preview').setDescription('Preview the yearbook privately + get the HTML/JSON export'))
+        .addSubcommand((s) => s.setName('preview').setDescription('Preview the yearbook pages privately before publishing'))
         .addSubcommand((s) =>
           s.setName('publish').setDescription('Publish the yearbook to the yearbook channel')
             .addBooleanOption((o) => o.setName('confirm').setDescription('Yes, publish it publicly').setRequired(true)),
@@ -326,11 +326,9 @@ async function yearbookGroup(sub, interaction, ctx) {
   const book = await yearbook.compile(ctx.db);
   const issues = yearbook.problems(book);
   if (sub === 'preview') {
-    const embeds = yearbook.toEmbeds(book).slice(0, 9);
     return interaction.editReply({
       content: issues.length ? `⚠️ **Before publishing:**\n• ${truncate(issues.join('\n• '), 1700)}` : '✅ Looks complete!',
-      embeds,
-      files: yearbook.exportFiles(book),
+      files: yearbook.pageFiles(book).slice(0, 10),
     });
   }
   if (sub === 'publish') {

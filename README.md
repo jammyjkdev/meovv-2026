@@ -7,7 +7,7 @@ Runs the **MEOVV 2026 Yearbook** fan event (Nov 2 – Nov 22) on Discord:
 | **Week 1 · Nov 2–8** | Posts the kickoff announcement. Fans nominate with `/nominate member` (superlatives) and `/nominate moment` (2026 content and moments, with an optional link). Autocomplete suggests what other fans already nominated, so duplicates group together. |
 | **Week 2 · Nov 9–15** | The top nominations become **native Discord polls**, posted automatically every day. Each poll links the nominated content so fans can rewatch it before voting. |
 | **Week 3 · Nov 16–22** | Posts *"What MEOVV moment made your 2026?"* with a **💌 Share your moment** button (or `/moment`), then runs the retrospective polls. |
-| **Reveal · Nov 22** | Builds the yearbook (Member Superlatives, 2026 Fan Favorites, MEOVV Moments of 2026, featured fan responses). Posts it as embeds plus a **printable HTML page** and a **JSON export**. |
+| **Reveal · Nov 22** | Builds the yearbook (Member Superlatives, 2026 Fan Favorites, MEOVV Moments of 2026, featured fan responses) as **PNG pages** and posts them, one message per page. |
 
 Staff stay in control with `/yb`. They can merge duplicate nominations, fix names and links, exclude spam, preview or override polls, pick featured fan responses, and publish the yearbook.
 
@@ -70,7 +70,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 - `user view | remove`: everything one fan nominated and shared, or wipe it (spam). The `user` option takes an @mention, or type their username or ID.
 - `poll preview | post | end | results`: check or override polls. `post options:"A | B=https://… | C"` posts hand-picked answers.
 - `memories list | feature | unfeature | remove`: choose fan responses for the yearbook, optionally credited anonymously
-- `yearbook preview | publish`: private preview with a checklist and the HTML/JSON files, then the public reveal
+- `yearbook preview | publish`: private preview of the PNG pages with a checklist, then the public reveal
 - `schedule list | run | retry`: view the automatic timeline, run an item now, or retry a failed one
 
 ## Staff runbook
@@ -82,7 +82,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 5. **During Week 2 and 3:** results arrive in the log channel as each poll closes. Ties are flagged.
 6. **Before Nov 16:** fill in `options` for any Week 3 retrospective poll you want hand-picked in `config/yearbook.config.js`, then restart the bot. Without that, the bot pulls the top Week 1 nominations from the poll's `sources`.
 7. **Nov 16–22:** use `/yb memories list` to review responses and `/yb memories feature id:…` to pick the ones for the yearbook.
-8. **Nov 22:** the bot posts a checklist in the log channel. Run `/yb yearbook preview`, resolve anything flagged, then `/yb yearbook publish confirm:true`. The HTML file is a ready-made yearbook page for socials and the archive. It is also saved to `data/yearbook/`.
+8. **Nov 22:** the bot posts a checklist in the log channel. Run `/yb yearbook preview`, resolve anything flagged, then `/yb yearbook publish confirm:true`. The pages are 1080×1350 PNGs, ready for socials too.
 
 > Discord polls show results publicly once they close, so the reveal reveals the full yearbook rather than individual winners for the first time.
 
@@ -103,6 +103,7 @@ Set `YEARBOOK_NOW=2026-11-09T11:58` in `.env` to make the bot think it's that ti
 ```bash
 npm test             # unit tests (text normalisation, tallying, schedule, services, command definitions)
 npm run schedule     # print the computed event timeline
+npm run render       # render the yearbook pages with sample data to data/previews/
 ```
 
 ```
@@ -110,7 +111,8 @@ config/yearbook.config.js   event settings (edit me)
 src/index.js                bot entry: interactions + scheduler
 src/deploy-commands.js      registers slash commands
 src/commands/               /nominate, /mynominations, /moment, /yearbook, /yb
-src/services/               nominations, polls, announcements, scheduler, yearbook builder
+src/services/               nominations, polls, announcements, scheduler, staff log, yearbook builder
+src/services/pages.js       yearbook PNG pages (fonts in assets/fonts)
 src/lib/                    pure helpers (normalising, tallying, schedule planning)
 src/db.js                   MongoDB storage
 ```

@@ -110,12 +110,14 @@ test('memories + yearbook compile', async () => {
   assert.equal(bd.winners[0].text, 'ANNA');
   assert.equal(book.memories.length, 1);
   assert.equal(book.memories[0].author, 'A MEOVV fan');
-  const html = yearbook.toHtml(book);
-  assert.ok(html.includes('Seeing them live &lt;3'), 'html escaped');
   assert.ok(yearbook.problems(book).some((p) => p.includes('never posted')));
-  const embeds = yearbook.toEmbeds(book);
-  assert.ok(embeds.length >= 4);
-  for (const e of embeds) e.toJSON();
+  const pages = yearbook.pageFiles(book);
+  assert.ok(pages.length >= 5, 'cover + three sections + memories');
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  for (const p of pages) {
+    assert.ok(p.name.endsWith('.png'), p.name);
+    assert.ok(p.attachment.subarray(0, 4).equals(PNG), `${p.name} is a PNG`);
+  }
 });
 
 test('the event waits for the staff command, then runs from that point', async () => {
