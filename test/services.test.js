@@ -184,6 +184,15 @@ test('the event waits for the staff command, then runs from that point', async (
     assert.match(entry.content, /<@fan>/);
     assert.deepEqual(entry.allowedMentions, { parse: [] });
 
+    // Staff can re-post the announcement at any time without touching the schedule, unpinged by default.
+    const fakeChannel = await client.channels.fetch();
+    const repostInteraction = { ...interaction({ sub: 'announce', message: 'nominations' }), options: { getSubcommandGroup: () => null, getSubcommand: () => 'announce', getString: () => 'nominations', getBoolean: () => null, getChannel: () => ({ ...fakeChannel, isTextBased: () => true }) } };
+    await yb.execute(repostInteraction, ctx);
+    assert.equal(announcements().length, 2);
+    assert.equal(announcements().at(-1).content, undefined, 'repost carries no ping by default');
+    assert.deepEqual(announcements().at(-1).allowedMentions, { roles: [] });
+    assert.equal((await eventDb.allJobs()).size, 1, 'schedule unchanged');
+
     // Later passes and a second command don't repeat the announcement.
     await scheduler.tick(ctx, log);
     const afterTick = sent.length;
@@ -191,7 +200,7 @@ test('the event waits for the staff command, then runs from that point', async (
     await runStart();
     assert.match(replies.at(-1), /already started/);
     assert.equal(sent.length, afterTick);
-    assert.equal(announcements().length, 1);
+    assert.equal(announcements().length, 2);
   } finally {
     await eventDb.close();
   }

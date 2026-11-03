@@ -8,6 +8,7 @@ const polls = require('../services/polls');
 const yearbook = require('../services/yearbook');
 const scheduler = require('../services/scheduler');
 const { entries: logEntry } = require('../services/staffLog');
+const { phaseAnnouncement, reminderMessage } = require('../services/announcements');
 
 const ephemeral = MessageFlags.Ephemeral;
 
@@ -37,6 +38,19 @@ const data = () =>
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .setContexts(InteractionContextType.Guild)
     .addSubcommand((s) => s.setName('status').setDescription('Event status overview'))
+    .addSubcommand((s) =>
+      s.setName('announce').setDescription('Re-post a phase announcement or reminder now (does not change the schedule)')
+        .addStringOption((o) =>
+          o.setName('message').setDescription('Which message').setRequired(true).addChoices(
+            { name: 'Week 1 · Nominations announcement', value: 'nominations' },
+            { name: 'Week 2 · Voting announcement', value: 'voting' },
+            { name: 'Week 3 · Year in Review announcement', value: 'review' },
+            ...config.event.reminders.map((r, i) => ({ name: `Reminder ${i + 1}: ${truncate(r.text.replace(/[*`]/g, ''), 70)}`, value: `reminder:${i}` })),
+          ),
+        )
+        .addBooleanOption((o) => o.setName('ping').setDescription('Ping the announcement role (default: no)'))
+        .addChannelOption((o) => o.setName('channel').setDescription('Post somewhere other than the event channel')),
+    )
     .addSubcommandGroup((g) =>
       g.setName('nominations').setDescription('Review and clean up nominations')
         .addSubcommand((s) => s.setName('view').setDescription('Ranked nominees for a category').addStringOption((o) => categoryOpt(o)))
@@ -198,6 +212,21 @@ async function status(interaction, ctx) {
   const failed = [...done.values()].filter((j) => j.status !== 'done');
   if (failed.length) embed.addFields({ name: '⚠️ Needs attention', value: truncate(failed.map((j) => `\`${j.key}\` ${j.status}: ${j.detail ?? ''}`).join('\n'), 1024) });
   return interaction.reply({ embeds: [embed], flags: ephemeral });
+}
+
+/** Re-post an announcement or reminder with the current copy. */
+async function announce(interaction) {
+  const which = interaction.options.getString('message');
+  const ping = interaction.options.getBoolean('ping') ?? false;
+  const channel = interaction.options.getChannel('channel') ?? (await interaction.client.channels.fetch(config.env.announceChannelId));
+  if (!channel?.isTextBased?.()) return interaction.reply({ content: 'That channel can’t take messages.', flags: ephemeral });
+  await interaction.deferReply({ flags: ephemeral });
+  const message = which.startsWith('reminder:') ? reminderMessage(Number(which.slice(9))) : phaseAnnouncement(which);
+  const pingText = config.env.pingRoleId ? `<@&${config.env.pingRoleId}>` : '';
+  const content = ping ? message.content : (message.content ?? '').replace(pingText, '').trim() || undefined;
+  const msg = await channel.send({ ...message, content, allowedMentions: { roles: ping && config.env.pingRoleId ? [config.env.pingRoleId] : [] } });
+  await interaction.editReply(`📣 Posted → ${msg.url}`);
+  return audit(interaction, `re-posted the **${which}** message${ping ? ' with a ping' : ''} → ${msg.url}`);
 }
 
 async function nominationsGroup(sub, interaction, ctx) {
@@ -428,6 +457,7 @@ async function execute(interaction, ctx) {
   const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
   if (!group && sub === 'status') return status(interaction, ctx);
+  if (!group && sub === 'announce') return announce(interaction);
   const handlers = { nominations: nominationsGroup, user: userGroup, poll: pollGroup, memories: memoriesGroup, yearbook: yearbookGroup, schedule: scheduleGroup };
   return handlers[group](sub, interaction, ctx);
 }

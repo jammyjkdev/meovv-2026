@@ -65,6 +65,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 
 **Staff (`/yb`)**
 - `status`: phase, participation numbers, what's next, and anything that failed
+- `announce message [ping] [channel]`: re-post a phase announcement or reminder now, with the current copy; no ping unless asked, and the schedule is untouched
 - `nominations view | merge | rename | link | exclude`: curate nominees before Week 2
 - `user view | remove`: everything one fan nominated and shared, or wipe it (spam). The `user` option takes an @mention, or type their username or ID.
 - `poll preview | post | end | results`: check or override polls. `post options:"A | B=https://… | C"` posts hand-picked answers.
