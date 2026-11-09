@@ -36,12 +36,13 @@ module.exports = {
   // Accent colour for embeds (hex number). Black: Discord treats 0x000000 as "no colour", so use 0x010101.
   color: 0x010101,
 
+  // Each member's colour heart (matches the server's channel list). Shown on poll answers.
   members: [
-    { id: 'sooin', name: 'SOOIN', emoji: '🐱' },
-    { id: 'gawon', name: 'GAWON', emoji: '🐱' },
-    { id: 'anna', name: 'ANNA', emoji: '🐱' },
-    { id: 'narin', name: 'NARIN', emoji: '🐱' },
-    { id: 'ella', name: 'ELLA', emoji: '🐱' },
+    { id: 'sooin', name: 'SOOIN', emoji: '🩵' },
+    { id: 'gawon', name: 'GAWON', emoji: '🖤' },
+    { id: 'anna', name: 'ANNA', emoji: '🤍' },
+    { id: 'narin', name: 'NARIN', emoji: '🩷' },
+    { id: 'ella', name: 'ELLA', emoji: '💜' },
   ],
 
   phases: {
