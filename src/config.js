@@ -27,7 +27,6 @@ function validate(cfg) {
     if (ids.has(c.id)) errors.push(`Duplicate category id "${c.id}"`);
     ids.add(c.id);
     if (c.title.length > 250) errors.push(`Title too long for "${c.id}"`);
-    if (c.emoji !== undefined && (typeof c.emoji !== 'string' || !c.emoji.trim())) errors.push(`Emoji for "${c.id}" must be a non-empty string`);
   }
   const nomIds = new Set(cfg.nominationCategories.map((c) => c.id));
   for (const r of cfg.reviewPolls) {

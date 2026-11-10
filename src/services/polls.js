@@ -13,21 +13,16 @@ const SECTION_HEADERS = {
   moments: '✨ MEOVV Moments of 2026',
 };
 
-/** Poll title with its configured emoji in front, if any. */
-function pollTitle(cat) {
-  return cat.emoji ? `${cat.emoji} ${cat.title}` : cat.title;
-}
-
 function pollIntro(cat, options, endsAt) {
   const name = config.event.eventName.toUpperCase();
   const kicker = cat.type === 'review' ? `🔁 Year in Review · ${SECTION_HEADERS[cat.section] ?? ''}` : SECTION_HEADERS[cat.section] ?? '';
   const lines = [`## ${name}`, `${kicker}`.trim(), ''];
   if (cat.type === 'superlative') {
-    lines.push(`**${pollTitle(cat)}** — your ${options.length} most-nominated members from Week 1. Who takes it? Vote below! 🗳️`);
+    lines.push(`**${cat.title}** — your ${options.length} most-nominated members from Week 1. Who takes it? Vote below! 🗳️`);
   } else if (cat.type === 'nomination') {
-    lines.push(`**${pollTitle(cat)}** — these are your top nominations from Week 1. Vote for your favorite! 🗳️`);
+    lines.push(`**${cat.title}** — these are your top nominations from Week 1. Vote for your favorite! 🗳️`);
   } else {
-    lines.push(`**${pollTitle(cat)}** — vote below! 🗳️`);
+    lines.push(`**${cat.title}** — vote below! 🗳️`);
   }
   lines.push('', `Poll closes ${ts(endsAt, 'R')} (${ts(endsAt, 'f')}).`);
   if (config.env.pingRoleId) lines.push(`<@&${config.env.pingRoleId}>`);
@@ -63,7 +58,7 @@ async function postPoll(ctx, pollKey, opts = {}) {
   const message = await channel.send({
     content: pollIntro(cat, options, endsAt),
     poll: {
-      question: { text: truncate(pollTitle(cat), 300) },
+      question: { text: truncate(`${cat.title}`, 300) },
       answers: options.map((o) => (o.emoji ? { text: o.text, emoji: o.emoji } : { text: o.text })),
       duration,
       allowMultiselect: false,
