@@ -665,7 +665,7 @@ function renderAll(book, { spreads = config.event.yearbook?.spreads ?? true } = 
   const inside = [];
   let n = 2;
   const add = (slug, canvases) => canvases.forEach((canvas, i) => inside.push({ no: n++, slug: `${slug}${canvases.length > 1 ? `-${i + 1}` : ''}`, canvas }));
-  if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n));
+  if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n, { straight: true }));
   if (book.favorites.length) add('fan-favorites', renderAlbums('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
   if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n, { straight: true }));
   if (book.memories.length) add('memories', renderMemories(book, n));
