@@ -5,7 +5,7 @@ const config = require('../src/config');
 const { renderAll, logoReady } = require('../src/services/pages');
 
 const members = config.event.members;
-const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
+const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, emoji: c.emoji, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
 
 const superlatives = config.superlatives().map((c, i) => entry(c, i));
 const note = (author, text) => ({ author, text });

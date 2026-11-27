@@ -19,6 +19,7 @@ async function compile(db) {
       id: cat.id,
       title: cat.title,
       type: cat.type,
+      emoji: cat.emoji ?? null,
       status: !poll ? 'not-posted' : poll.status === 'open' ? 'open' : winners.length ? 'decided' : 'no-votes',
       winners: winners.map((w) => ({ text: w.text, votes: w.votes, link: w.link ?? null })),
       totalVotes,

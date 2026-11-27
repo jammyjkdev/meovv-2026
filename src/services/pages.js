@@ -149,7 +149,8 @@ function renderCover(book) {
 function measureCell(ctx, e, colW, labelPx, nameMax) {
   ctx.font = label(labelPx);
   const cat = wrap(ctx, e.title.toUpperCase(), colW).slice(0, 2);
-  const name = e.winners.length ? e.winners.map((w) => (memberStyle(w.text) ? `${w.text} ${memberStyle(w.text).emoji}` : w.text)).join('  &  ') : 'TBA';
+  // winner(s), then the category's themed emoji (e.g. 👗 Best Dressed, 🏎️ Break the Rules)
+  const name = e.winners.length ? `${e.winners.map((w) => w.text).join('  &  ')}${e.emoji ? ` ${e.emoji}` : ''}` : 'TBA';
   const px = fit(ctx, name, colW, display, nameMax, 30);
   ctx.font = display(px);
   const lines = wrap(ctx, name, colW).slice(0, 2);

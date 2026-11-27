@@ -80,16 +80,17 @@ module.exports = {
 
   // WEEK 1 → WEEK 2: fans nominate a member for each superlative.
   // The brief suggests narrowing to 6–8 — flip `enabled` to false to drop one.
+  // emoji: printed after the winner's name on the Member Superlatives page
   superlatives: [
-    { id: 'best-dressed', title: 'Best Dressed', enabled: true },
-    { id: 'go-viral', title: 'Most Likely to Go Viral', enabled: true },
-    { id: 'make-you-laugh', title: 'Most Likely to Make You Laugh', enabled: true },
-    { id: 'start-a-trend', title: 'Most Likely to Start a Trend', enabled: true },
-    { id: 'break-the-rules', title: 'Most Likely to Break the Rules', enabled: true },
-    { id: 'best-playlist', title: 'Most Likely to Have the Best Playlist', enabled: true },
-    { id: 'off-duty-style', title: 'Best Off-Duty Style', enabled: false },
-    { id: 'most-chaotic', title: 'Most Chaotic Member', enabled: true },
-    { id: 'concert-bestie', title: "Member You'd Want as Your Concert Bestie", enabled: true },
+    { id: 'best-dressed', title: 'Best Dressed', emoji: '👗', enabled: true },
+    { id: 'go-viral', title: 'Most Likely to Go Viral', emoji: '📱', enabled: true },
+    { id: 'make-you-laugh', title: 'Most Likely to Make You Laugh', emoji: '😹', enabled: true },
+    { id: 'start-a-trend', title: 'Most Likely to Start a Trend', emoji: '✨', enabled: true },
+    { id: 'break-the-rules', title: 'Most Likely to Break the Rules', emoji: '🏎️', enabled: true },
+    { id: 'best-playlist', title: 'Most Likely to Have the Best Playlist', emoji: '🎧', enabled: true },
+    { id: 'off-duty-style', title: 'Best Off-Duty Style', emoji: '🕶️', enabled: false },
+    { id: 'most-chaotic', title: 'Most Chaotic Member', emoji: '🌪️', enabled: true },
+    { id: 'concert-bestie', title: "Member You'd Want as Your Concert Bestie", emoji: '🎤', enabled: true },
   ],
 
   // WEEK 1 → WEEK 2: fans nominate content/moments (free text + optional link).
