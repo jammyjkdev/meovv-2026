@@ -31,7 +31,7 @@ async function compile(db) {
   const memories = (await db.listMemories({ featuredOnly: true, limit: 500 })).map((m) => ({
     id: m.id,
     author: m.anonymous ? 'A MEOVV fan' : m.user_name,
-    text: m.text,
+    text: m.book_text || m.text,
   }));
 
   const superlatives = section('superlatives');
@@ -58,7 +58,7 @@ function groupNotes(superlatives, reasons) {
       const byMember = new Map();
       for (const r of reasons.filter((x) => x.category_id === cat.id)) {
         if (!byMember.has(r.norm)) byMember.set(r.norm, []);
-        byMember.get(r.norm).push({ author: r.reason_anonymous ? 'A MEOVV fan' : r.user_name, text: r.reason });
+        byMember.get(r.norm).push({ author: r.reason_anonymous ? 'A MEOVV fan' : r.user_name, text: r.reason_book || r.reason });
       }
       const groups = [...byMember.entries()]
         .map(([id, notes]) => {

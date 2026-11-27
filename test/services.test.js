@@ -165,9 +165,20 @@ test('review queue: approve, reject and skip fan moments and nomination notes', 
   assert.deepEqual(book.notes[0].groups.map((g) => [g.member, g.winner, g.notes[0].author]), [['NARIN', true, 'A MEOVV fan']]);
   assert.ok(yearbook.pageFiles(book).some((p) => p.name.includes('fan-notes')));
 
-  // a fan editing their note sends it back to the queue
+  // staff cut a note down for the book; the original stays, and the book prints the cut
+  const narin = (await db.nominationsByUser('u20'))[0];
+  await db.setBookText('reason', String(narin._id), 'Red hair!');
+  assert.equal((await db.getReason(String(narin._id))).reason, 'Red hair era!');
+  assert.equal((await yearbook.compile(db)).notes[0].groups[0].notes[0].text, 'Red hair!');
+  const savedBack = await review.saveEdit(db, review.buttonId('save', { kind: 'reason', id: String(narin._id) }, pending), 'Red hair era!');
+  assert.match(savedBack.audit, /original/);
+  assert.equal((await yearbook.compile(db)).notes[0].groups[0].notes[0].text, 'Red hair era!', 'typing the original back clears the edit');
+  await db.setBookText('reason', String(narin._id), 'Red hair!');
+
+  // a fan editing their note sends it back to the queue (and drops the staff cut)
   await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(20), reason: 'Changed my mind, still Narin' });
   assert.equal((await review.counts(db)).reason.pending, 1);
+  assert.equal((await db.nominationsByUser('u20'))[0].reason_book, null);
   await db.deleteNominationsByUser('u20');
   await db.deleteNominationsByUser('u21');
   await db.deleteNominationsByUser('u22');

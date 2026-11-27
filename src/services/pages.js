@@ -227,42 +227,126 @@ function renderGrid(kicker, title, entries, firstPageNo) {
   });
 }
 
-/** Fan responses, as many per page as fit; returns one buffer per page. */
-function renderMemories(book, firstPageNo) {
-  const out = [];
-  const quoteFont = 30;
-  const lineH = 42;
-  const bodyW = INNER - 40;
-  const blocks = book.memories.map((m) => {
-    const { ctx } = page();
-    ctx.font = label(quoteFont);
-    const lines = wrap(ctx, `“${m.text}”`, bodyW);
-    return { lines, author: m.author, height: lines.length * lineH + 70 + 40 };
-  });
+// ── scrapbook cards (fan notes + fan memories) ───────────────────
+// Quotes print as cards that are deliberately a little off: each has its own tilt, width and side,
+// short ones pair up side by side, and a strip of "tape" holds each one down. Everything derives from
+// a hash of the text, so the preview and the published pages always match.
 
+/** Stable 32-bit hash of a string. */
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+/** '#RRGGBB' → 'rgba(r,g,b,a)'. */
+function tint(hex, a) {
+  const n = parseInt(String(hex ?? '#FFFFFF').replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+const CARD_PAD = 24;
+const SHORT = 90; // characters: short quotes can share a row
+
+/** Type style by length: punchy one-liners in the display face, longer ones in the serif. */
+function quoteStyle(text) {
+  if (text.length <= 60) return { font: display, px: 44, lineH: 50, upper: false };
+  if (text.length <= 160) return { font: label, px: 29, lineH: 40, upper: false };
+  return { font: label, px: 25, lineH: 35, upper: false };
+}
+
+/** Measure a card at width `w`. */
+function measureCard(ctx, { text, author, color }, w) {
+  const st = quoteStyle(text);
+  ctx.font = st.font(st.px);
+  const lines = wrap(ctx, `“${text}”`, w - CARD_PAD * 2);
+  const h = CARD_PAD + lines.length * st.lineH + 18 + 20 + CARD_PAD;
+  const seed = hash(`${author}|${text}`);
+  const angle = (((seed % 9) - 4) * 0.35 + (seed % 2 ? 0.2 : -0.2)) * (Math.PI / 180); // about ±1.6°
+  return { text, author, color: color ?? '#FFFFFF', st, lines, w, h, seed, angle };
+}
+
+/** Draw a measured card with its top-left at (x, y), rotated about its centre. */
+function drawCard(ctx, c, x, y) {
+  ctx.save();
+  ctx.translate(x + c.w / 2, y + c.h / 2);
+  ctx.rotate(c.angle);
+  ctx.translate(-c.w / 2, -c.h / 2);
+  ctx.beginPath();
+  ctx.roundRect(0, 0, c.w, c.h, 14);
+  ctx.fillStyle = tint(c.color, 0.09);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = tint(c.color, 0.55);
+  ctx.stroke();
+  // tape
+  ctx.save();
+  const tx = c.w * (0.3 + (c.seed % 40) / 100);
+  ctx.translate(tx, 0);
+  ctx.rotate(((c.seed % 2 ? 1 : -1) * 4 * Math.PI) / 180);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fillRect(-48, -12, 96, 24);
+  ctx.restore();
+  // quote + credit
+  ctx.fillStyle = INK;
+  ctx.font = c.st.font(c.st.px);
+  c.lines.forEach((l, j) => ctx.fillText(l, CARD_PAD, CARD_PAD + (j + 1) * c.st.lineH - (c.st.lineH - c.st.px) / 2));
+  ctx.fillStyle = tint(c.color, 0.85);
+  ctx.font = label(18);
+  ctx.fillText(`—  ${c.author.toUpperCase()}`, CARD_PAD, c.h - CARD_PAD + 4);
+  ctx.restore();
+}
+
+/** Room a tilted card needs vertically beyond its own height. */
+const tiltRoom = (c) => Math.abs(Math.sin(c.angle)) * c.w + 12;
+
+/**
+ * Turn a list of quotes into rows: two short quotes side by side, or one card at a varied width,
+ * nudged left or right. Returns rows with a height and a draw(ctx, y) function.
+ */
+function cardRows(ctx, quotes) {
+  const rows = [];
+  const gap = 30;
+  for (let i = 0; i < quotes.length; i++) {
+    const q = quotes[i];
+    const next = quotes[i + 1];
+    if (q.text.length <= SHORT && next && next.text.length <= SHORT) {
+      const half = (INNER - gap) / 2;
+      const a = measureCard(ctx, q, half);
+      const b = measureCard(ctx, next, half);
+      const dy = (hash(q.text) % 3) * 14; // stagger the pair
+      const h = Math.max(a.h, b.h + dy) + Math.max(tiltRoom(a), tiltRoom(b));
+      rows.push({ h, draw: (c2, y) => { drawCard(c2, a, MARGIN, y + 8); drawCard(c2, b, MARGIN + half + gap, y + 8 + dy); } });
+      i++;
+      continue;
+    }
+    const seed = hash(q.text);
+    const w = Math.round(INNER * [0.8, 0.86, 0.92][seed % 3]);
+    const c = measureCard(ctx, q, w);
+    const x = rows.length % 2 ? MARGIN + INNER - w : MARGIN; // alternate sides
+    rows.push({ h: c.h + tiltRoom(c), draw: (c2, y) => drawCard(c2, c, x, y + 8) });
+  }
+  return rows;
+}
+
+/**
+ * Lay rows out over as many pages as needed. A row with `keep` stays on the same page as the row after it
+ * (headings never end a page). Returns one buffer per page.
+ */
+function flow(rows, header) {
+  const out = [];
   let i = 0;
-  let pageNo = firstPageNo;
-  while (i < blocks.length) {
+  while (i < rows.length) {
     const { canvas, ctx } = page();
-    let y = chrome(ctx, '💌 Year in Review', config.event.memories.prompt, String(pageNo++).padStart(2, '0'));
-    const bottom = BOTTOM;
+    let y = header(ctx, out.length);
     let placed = 0;
-    while (i < blocks.length && (y + blocks[i].height <= bottom || placed === 0)) {
-      const b = blocks[i++];
-      ctx.fillStyle = RULE;
-      ctx.fillRect(MARGIN, y, 4, Math.min(b.height - 40, bottom - y));
-      ctx.fillStyle = INK;
-      ctx.font = label(quoteFont);
-      for (const l of b.lines) {
-        if (y + lineH > bottom) break;
-        y += lineH;
-        ctx.fillText(l, MARGIN + 40, y);
-      }
-      y += 48;
-      ctx.fillStyle = MUTED;
-      ctx.font = label(22);
-      ctx.fillText(`—  ${b.author.toUpperCase()}`, MARGIN + 40, y);
-      y += 60;
+    while (i < rows.length) {
+      let need = rows[i].h;
+      for (let k = i; rows[k]?.keep && rows[k + 1]; k++) need += rows[k + 1].h;
+      if (placed && y + need > BOTTOM) break;
+      rows[i].draw(ctx, y);
+      y += rows[i].h;
+      i++;
       placed++;
     }
     out.push(canvas.toBuffer('image/png'));
@@ -270,67 +354,52 @@ function renderMemories(book, firstPageNo) {
   return out;
 }
 
+/** Fan memories as scrapbook cards, colours cycling through the members. */
+function renderMemories(book, firstPageNo) {
+  const colors = config.event.members.map((m) => m.color).filter(Boolean);
+  const { ctx } = page();
+  const quotes = book.memories.map((m, i) => ({ text: m.text, author: m.author, color: colors[i % colors.length] }));
+  return flow(cardRows(ctx, quotes), (c, n) =>
+    chrome(c, n ? '💌 Year in Review · continued' : '💌 Year in Review', config.event.memories.prompt, String(firstPageNo + n).padStart(2, '0')));
+}
+
 /**
- * "In the fans' words": approved nomination notes under each superlative, member names in their colour.
+ * "In the fans' words": approved nomination notes under each superlative, as cards in the member's colour.
  * Flows across as many pages as needed; returns one buffer per page.
  */
 function renderNotes(book, firstPageNo) {
-  const lineH = 36;
-  const quotePx = 26;
-  const bodyW = INNER - 40;
-  const { ctx: m } = page();
-  // flatten into blocks: category heading, member heading, quotes
-  const blocks = [];
+  const { ctx } = page();
+  const rows = [];
   for (const cat of book.notes) {
-    blocks.push({ type: 'cat', text: `🏆  ${cat.title.toUpperCase()}`, h: 64 });
-    for (const g of cat.groups) {
-      blocks.push({ type: 'member', text: `${g.member} ${g.emoji ?? ''}${g.winner ? '  🏁' : ''}`, color: g.color ?? INK, h: 62 });
-      for (const n of g.notes) {
-        m.font = label(quotePx);
-        const lines = wrap(m, `“${n.text}”`, bodyW);
-        blocks.push({ type: 'quote', lines, author: n.author, color: g.color ?? RULE, h: lines.length * lineH + 52 });
-      }
-    }
+    const first = rows.length === 0;
+    rows.push({
+      h: first ? 54 : 70,
+      keep: true,
+      draw: (c, y) => {
+        c.fillStyle = MUTED;
+        c.font = label(24);
+        c.fillText(`🏆  ${cat.title.toUpperCase()}`, MARGIN, y + (first ? 34 : 50));
+      },
+    });
+    cat.groups.forEach((g, gi) => {
+      const color = g.color ?? INK;
+      const name = `${g.member} ${g.emoji ?? ''}${g.winner ? '  🏁' : ''}`;
+      const right = gi % 2 === 1; // member names alternate sides too
+      rows.push({
+        h: 60,
+        keep: true,
+        draw: (c, y) => {
+          c.fillStyle = color;
+          c.font = display(46);
+          c.textAlign = right ? 'right' : 'left';
+          c.fillText(name, right ? W - MARGIN : MARGIN, y + 48);
+          c.textAlign = 'left';
+        },
+      });
+      rows.push(...cardRows(ctx, g.notes.map((n) => ({ text: n.text, author: n.author, color }))));
+    });
   }
-
-  const out = [];
-  let i = 0;
-  let pageNo = firstPageNo;
-  while (i < blocks.length) {
-    const { canvas, ctx } = page();
-    let y = chrome(ctx, out.length ? '💬 Fan notes · continued' : '💬 Fan notes', 'IN THE FANS’ WORDS', String(pageNo++).padStart(2, '0'));
-    let placed = 0;
-    while (i < blocks.length) {
-      const b = blocks[i];
-      // keep headings with at least one quote after them
-      const need = b.type === 'quote' ? b.h : b.h + (blocks[i + 1]?.h ?? 0) + (b.type === 'cat' ? (blocks[i + 2]?.h ?? 0) : 0);
-      if (placed && y + need > BOTTOM) break;
-      if (b.type === 'cat') {
-        if (placed) y += 16;
-        ctx.fillStyle = MUTED;
-        ctx.font = label(24);
-        ctx.fillText(b.text, MARGIN, y + 34);
-      } else if (b.type === 'member') {
-        ctx.fillStyle = b.color;
-        ctx.font = display(44);
-        ctx.fillText(b.text, MARGIN, y + 46);
-      } else {
-        ctx.fillStyle = b.color;
-        ctx.fillRect(MARGIN, y + 6, 4, b.lines.length * lineH);
-        ctx.fillStyle = INK;
-        ctx.font = label(quotePx);
-        b.lines.forEach((l, j) => { if (y + (j + 1) * lineH <= BOTTOM) ctx.fillText(l, MARGIN + 40, y + (j + 1) * lineH); });
-        ctx.fillStyle = MUTED;
-        ctx.font = label(18);
-        ctx.fillText(`—  ${b.author.toUpperCase()}`, MARGIN + 40, y + b.lines.length * lineH + 32);
-      }
-      y += b.h;
-      i++;
-      placed++;
-    }
-    out.push(canvas.toBuffer('image/png'));
-  }
-  return out;
+  return flow(rows, (c, n) => chrome(c, n ? '💬 Fan notes · continued' : '💬 Fan notes', 'IN THE FANS’ WORDS', String(firstPageNo + n).padStart(2, '0')));
 }
 
 /**

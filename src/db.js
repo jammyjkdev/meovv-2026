@@ -90,7 +90,7 @@ function createRepo(client, col) {
         col.nominations.updateOne(
           { category_id: categoryId, user_id: userId },
           // A new or edited "why" goes back into the review queue.
-          { $set: { user_name: userName, value, norm, link, reason, reason_status: null, reason_anonymous: false, updated_at: t }, $setOnInsert: { created_at: t } },
+          { $set: { user_name: userName, value, norm, link, reason, reason_status: null, reason_anonymous: false, reason_book: null, updated_at: t }, $setOnInsert: { created_at: t } },
           { upsert: true },
         ),
       );
@@ -184,7 +184,7 @@ function createRepo(client, col) {
         const doc = await col.memories.findOneAndUpdate(
           { user_id: userId },
           // an edited response goes back into the review queue
-          { $set: { user_name: userName, text, updated_at: now(), removed: false, featured: false, reviewed: false } },
+          { $set: { user_name: userName, text, updated_at: now(), removed: false, featured: false, reviewed: false, book_text: null } },
         );
         return doc && { id: doc.id, status: 'updated' };
       };
@@ -249,6 +249,13 @@ function createRepo(client, col) {
       return (
         await col.nominations.updateOne({ _id: new ObjectId(id) }, { $set: { reason_status: approved ? 'approved' : 'rejected', reason_anonymous: anonymous } })
       ).matchedCount;
+    },
+    /** Staff's cut-down version for the yearbook (null or '' = print the fan's original). The original is never changed. */
+    async setBookText(kind, id, text) {
+      const value = text?.trim() || null;
+      if (kind === 'memory') return (await col.memories.updateOne({ id: Number(id) }, { $set: { book_text: value } })).matchedCount;
+      if (!ObjectId.isValid(id)) return 0;
+      return (await col.nominations.updateOne({ _id: new ObjectId(id) }, { $set: { reason_book: value } })).matchedCount;
     },
     approvedReasons() {
       return col.nominations.find(reviewFilter('reason', 'approved')).sort({ created_at: 1, _id: 1 }).toArray();

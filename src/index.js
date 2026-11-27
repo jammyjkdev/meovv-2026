@@ -68,6 +68,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       log.info(`button: review ${interaction.customId.split(':')[1]}`, { user: who });
       return await reviewButton(interaction, ctx);
     }
+    if (interaction.isModalSubmit() && isReviewButton(interaction.customId)) {
+      log.info('modal: review edit saved', { user: who });
+      return await reviewButton(interaction, ctx);
+    }
     if (interaction.isModalSubmit() && interaction.customId === MEMORY_MODAL_ID) {
       log.info('modal: moment submitted', { user: who });
       return await submitMemory(interaction, ctx);

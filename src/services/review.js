@@ -3,9 +3,10 @@
  *   💌 moments: /moment responses ("What MEOVV moment made your 2026?")
  *   🏆 notes:   the "why" fans wrote with /nominate member
  * `/yb review` shows one entry at a time with Approve / Approve anonymously / Reject / Skip buttons.
+ * ✏️ Edit saves a cut-down "book version" that the yearbook prints instead; the fan's original is kept.
  * Only approved entries are printed in the yearbook.
  */
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('../config');
 const { truncate } = require('../lib/text');
 const { findCategory, findMember } = require('./event');
@@ -59,7 +60,7 @@ async function locate(db, view) {
 
 function toItem(kind, doc) {
   if (kind === 'memory') {
-    return { kind, id: String(doc.id), userId: doc.user_id, userName: doc.user_name, text: doc.text, anonymous: Boolean(doc.anonymous), approved: Boolean(doc.featured), reviewed: Boolean(doc.reviewed || doc.featured) };
+    return { kind, id: String(doc.id), userId: doc.user_id, userName: doc.user_name, text: doc.text, bookText: doc.book_text || null, anonymous: Boolean(doc.anonymous), approved: Boolean(doc.featured), reviewed: Boolean(doc.reviewed || doc.featured) };
   }
   return {
     kind,
@@ -67,6 +68,7 @@ function toItem(kind, doc) {
     userId: doc.user_id,
     userName: doc.user_name,
     text: doc.reason,
+    bookText: doc.reason_book || null,
     anonymous: Boolean(doc.reason_anonymous),
     approved: doc.reason_status === 'approved',
     reviewed: Boolean(doc.reason_status),
@@ -109,15 +111,19 @@ async function render(db, view, notice = '') {
   }
 
   const embed = new EmbedBuilder().setColor(config.event.color).setFooter({ text: footer });
+  // the card shows what will be printed; an edited entry also shows the fan's original
+  const shown = item.bookText ?? item.text;
+  const quote = (t, max) => `> ${truncate(t, max).replace(/\n/g, '\n> ')}`;
   if (item.kind === 'memory') {
-    embed.setColor(MOMENT_COLOR).setTitle(`💌 Fan moment #${item.id}`).setDescription(truncate(item.text, 4000));
+    embed.setColor(MOMENT_COLOR).setTitle(`💌 Fan moment #${item.id}`).setDescription(truncate(shown, 4000));
   } else {
     const m = findMember(item.member);
     embed
       .setColor(hex(m?.color))
       .setTitle(`🏆 ${truncate(item.category, 200)}`)
-      .setDescription(`${m?.emoji ?? '⭐'} **For ${item.member}**\n> ${truncate(item.text, 3900).replace(/\n/g, '\n> ')}`);
+      .setDescription(`${m?.emoji ?? '⭐'} **For ${item.member}**\n${quote(shown, 3900)}`);
   }
+  if (item.bookText) embed.addFields({ name: '✏️ Edited for the book · fan’s original:', value: quote(item.text, 1000) });
   embed.addFields(
     { name: 'From', value: `<@${item.userId}> · ${truncate(item.userName ?? '', 100)}`, inline: true },
     { name: 'Status', value: statusLabel(item), inline: true },
@@ -129,9 +135,46 @@ async function render(db, view, notice = '') {
     new ButtonBuilder().setCustomId(buttonId('anon', item, view)).setStyle(ButtonStyle.Primary).setLabel('Approve anonymously').setEmoji('🕶️'),
     new ButtonBuilder().setCustomId(buttonId('reject', item, view)).setStyle(ButtonStyle.Danger).setLabel('Reject').setEmoji('❌'),
     new ButtonBuilder().setCustomId(buttonId('skip', item, view)).setStyle(ButtonStyle.Secondary).setLabel('Skip').setEmoji('⏭️'),
+  );
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(buttonId('edit', item, view)).setStyle(ButtonStyle.Secondary).setLabel(item.bookText ? 'Edit book version' : 'Edit / cut down').setEmoji('✏️'),
     new ButtonBuilder().setCustomId(buttonId('done', null, view)).setStyle(ButtonStyle.Secondary).setLabel('Done'),
   );
-  return { content: notice || undefined, embeds: [embed], components: [row], allowedMentions: { parse: [] } };
+  return { content: notice || undefined, embeds: [embed], components: [row, row2], allowedMentions: { parse: [] } };
+}
+
+/** The ✏️ Edit form, prefilled with the current book version (or the original). Null if the entry is gone. */
+async function editModal(db, customId) {
+  const { kind, id, view } = parseButtonId(customId);
+  const doc = kind === 'memory' ? await db.getMemory(Number(id)) : await db.getReason(id);
+  if (!doc) return null;
+  const item = toItem(kind, doc);
+  const input = new TextInputBuilder()
+    .setCustomId('text')
+    .setLabel('Version printed in the yearbook')
+    .setStyle(TextInputStyle.Paragraph)
+    .setMaxLength(4000)
+    .setRequired(false)
+    .setPlaceholder('Clear this box to print the fan’s original again')
+    .setValue(truncate(item.bookText ?? item.text, 4000));
+  return new ModalBuilder()
+    .setCustomId(buttonId('save', item, view))
+    .setTitle(kind === 'memory' ? `Edit fan moment #${id}` : truncate(`Edit note · ${item.member}`, 45))
+    .addComponents(new ActionRowBuilder().addComponents(input));
+}
+
+/** Save the ✏️ Edit form and show the same card again. */
+async function saveEdit(db, customId, text) {
+  const { kind, id, view } = parseButtonId(customId);
+  const doc = kind === 'memory' ? await db.getMemory(Number(id)) : await db.getReason(id);
+  const original = kind === 'memory' ? doc?.text : doc?.reason;
+  const value = text?.trim() && text.trim() !== original?.trim() ? text.trim() : null;
+  if (!doc || !(await db.setBookText(kind, id, value))) return { message: await render(db, view, '⚠️ That entry was deleted or withdrawn in the meantime.') };
+  const label = kind === 'memory' ? `fan moment #${id}` : `a nomination note (${findCategory(doc.category_id)?.title ?? doc.category_id} → ${doc.value})`;
+  return {
+    message: await render(db, view, value ? '✏️ Saved the book version. Approve it to put it in the yearbook.' : '↩️ Back to the fan’s original.'),
+    audit: value ? `edited the book version of ${label} by <@${doc.user_id}>:\n> ${truncate(value, 1500).replace(/\n/g, '\n> ')}` : `reset ${label} by <@${doc.user_id}> to the fan’s original`,
+  };
 }
 
 /**
@@ -169,4 +212,4 @@ async function handle(db, customId) {
   };
 }
 
-module.exports = { render, handle, counts, isReviewButton, parseButtonId, buttonId, TYPES, STATUSES };
+module.exports = { render, handle, editModal, saveEdit, counts, isReviewButton, parseButtonId, buttonId, TYPES, STATUSES };

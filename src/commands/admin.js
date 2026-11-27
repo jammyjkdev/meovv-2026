@@ -254,9 +254,19 @@ async function startReview(interaction, ctx) {
   return interaction.reply({ ...(await review.render(ctx.db, view)), flags: ephemeral });
 }
 
-/** Approve / reject / skip buttons on a review card. */
+/** Approve / reject / skip / edit buttons on a review card, and the ✏️ Edit form. */
 async function reviewButton(interaction, ctx) {
   if (!isStaff(interaction)) return interaction.reply({ content: 'Staff only.', flags: ephemeral });
+  if (interaction.isModalSubmit()) {
+    const { message, audit: line } = await review.saveEdit(ctx.db, interaction.customId, interaction.fields.getTextInputValue('text'));
+    await interaction.update(message);
+    return audit(interaction, line);
+  }
+  if (review.parseButtonId(interaction.customId)?.action === 'edit') {
+    const modal = await review.editModal(ctx.db, interaction.customId);
+    if (modal) return interaction.showModal(modal);
+    return interaction.update(await review.render(ctx.db, review.parseButtonId(interaction.customId).view, '⚠️ That entry was deleted or withdrawn in the meantime.'));
+  }
   const { message, audit: line } = await review.handle(ctx.db, interaction.customId);
   await interaction.update(message);
   if (line) await audit(interaction, line);

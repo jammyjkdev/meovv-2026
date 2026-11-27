@@ -69,7 +69,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 - `nominations view | merge | rename | link | exclude`: curate nominees before Week 2
 - `user view | remove`: everything one fan nominated and shared, or wipe it (spam). The `user` option takes an @mention, or type their username or ID.
 - `poll preview | post | end | results`: check or override polls. `post options:"A | B=https://… | C"` posts hand-picked answers.
-- `review [type] [show]`: 🏁 step through fan writing one card at a time with **✅ Approve · 🕶️ Approve anonymously · ❌ Reject · ⏭️ Skip** buttons. Covers 💌 fan moments (`/moment` responses) and 🏆 nomination notes (the *why* on `/nominate member`). Only approved entries go in the yearbook. `show:approved` or `show:rejected` lets you change your mind. A fan who edits their entry sends it back to pending.
+- `review [type] [show]`: 🏁 step through fan writing one card at a time with **✅ Approve · 🕶️ Approve anonymously · ❌ Reject · ⏭️ Skip** buttons. Covers 💌 fan moments (`/moment` responses) and 🏆 nomination notes (the *why* on `/nominate member`). Only approved entries go in the yearbook. **✏️ Edit / cut down** opens the text so you can trim it or fix typos: the yearbook prints your version, the fan's original is kept (and shown under it on the card), and clearing the box or typing the original back undoes the edit. `show:approved` or `show:rejected` lets you change your mind. A fan who edits their entry sends it back to pending and drops any staff edit.
 - `memories list | feature | unfeature | remove`: browse fan moments, or approve one by number
 - `yearbook preview | approve | lock | publish`: private preview of the PNG pages with a checklist; `approve` (bot owner or Manage Server only) unlocks publishing; `publish` posts the reveal to the event channel
 - `schedule list | run | retry`: view the automatic timeline, run an item now, or retry a failed one
@@ -99,7 +99,8 @@ Set `YEARBOOK_NOW=2026-11-09T11:58` in `.env` to make the bot think it's that ti
 - **Finalists:** `polls.finalistsPerPoll` (default 5, Discord's maximum is 10) sets how many top nominations make each Week 2 poll. `polls.superlativeFinalists` (default 3) shortlists the most-nominated members for each superlative poll; ties go to whoever was nominated first. Poll answers are limited to 55 characters, and `/yb nominations rename` sets a clean display name.
 - **Yearbook sections:** a category's `section` (`favorites` or `moments`) decides where its winner appears.
 - **Members:** each member's `emoji` (a heart) is used in polls and review cards, and their `color` prints their name in the yearbook pages. Approved nomination notes appear in *In the Fans' Words*, grouped by superlative with the winner first (🏁).
-- **Cover logo:** put the MEOVV logo at `assets/logo.png` or `assets/logo.svg` (white on transparent works best on the black cover) and restart the bot. It replaces the MEOVV wordmark. Without it, the cover prints MEOVV as text.
+- **Cover logo:** `assets/logo.png` (white on transparent) replaces the MEOVV wordmark on the cover. Swap the file (PNG or SVG) and restart the bot to change it. Without it, the cover prints MEOVV as text.
+- **Fan pages layout:** nomination notes and fan memories print as slightly tilted scrapbook cards in member colours, with varied widths and sides; short quotes pair up side by side in the display font. The tilt and placement come from the text itself, so the preview always matches what gets published.
 - **Fonts:** Anton, Cinzel and Noto Color Emoji (all SIL Open Font License) live in `assets/fonts`; emoji fall back to Noto Color Emoji on every page.
 
 ## Development
