@@ -128,6 +128,51 @@ test('memories + yearbook compile', async () => {
   }
 });
 
+test('review queue: approve, reject and skip fan moments and nomination notes', async () => {
+  const review = require('../src/services/review');
+  // u1/u2 moments exist from the test above (u1's approved as featured, u2's edited and pending)
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(20), reason: 'Red hair era!' });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'sooin', user: u(21), reason: 'Airport fits' });
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'gawon', user: u(22) }); // no note → not in the queue
+  const before = await review.counts(db);
+  assert.equal(before.memory.pending, 1);
+  assert.equal(before.reason.pending, 2);
+
+  const pending = { type: 'all', status: 'pending', offset: 0 };
+  let msg = await review.render(db, pending);
+  assert.match(msg.embeds[0].data.title, /Fan moment/, 'moments come first');
+  const approveMoment = msg.components[0].components[0].data.custom_id;
+  const res = await review.handle(db, approveMoment);
+  assert.match(res.audit, /approved fan moment/);
+  assert.match(res.message.embeds[0].data.title, /Best Dressed|🏆/, 'next card is the first note');
+
+  // skip the first note, reject the second, then approve the first anonymously
+  const skip = res.message.components[0].components[3].data.custom_id;
+  msg = (await review.handle(db, skip)).message;
+  assert.match(msg.embeds[0].data.description, /SOOIN/);
+  msg = (await review.handle(db, msg.components[0].components[2].data.custom_id)).message; // reject sooin
+  assert.match(msg.embeds[0].data.description, /NARIN/, 'wraps back to the skipped one');
+  msg = (await review.handle(db, msg.components[0].components[1].data.custom_id)).message; // approve narin anonymously
+  assert.equal(msg.components.length, 0, 'all caught up');
+
+  const after = await review.counts(db);
+  assert.deepEqual([after.memory.pending, after.reason.pending, after.reason.approved, after.reason.rejected], [0, 0, 1, 1]);
+
+  await db.savePoll({ pollKey: 'best-dressed', kind: 'superlative', question: 'Best Dressed', options: [], channelId: 'c', messageId: 'm', postedAt: 1, endsAt: 2 });
+  await db.saveResults('best-dressed', [{ text: 'NARIN', votes: 9 }, { text: 'SOOIN', votes: 2 }]);
+  const book = await yearbook.compile(db);
+  assert.deepEqual(book.notes.map((c) => c.id), ['best-dressed']);
+  assert.deepEqual(book.notes[0].groups.map((g) => [g.member, g.winner, g.notes[0].author]), [['NARIN', true, 'A MEOVV fan']]);
+  assert.ok(yearbook.pageFiles(book).some((p) => p.name.includes('fan-notes')));
+
+  // a fan editing their note sends it back to the queue
+  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(20), reason: 'Changed my mind, still Narin' });
+  assert.equal((await review.counts(db)).reason.pending, 1);
+  await db.deleteNominationsByUser('u20');
+  await db.deleteNominationsByUser('u21');
+  await db.deleteNominationsByUser('u22');
+});
+
 test('the event waits for the staff command, then runs from that point', async () => {
   const eventDb = await open(server.getUri(), { dbName: 'manual-start' });
   try {

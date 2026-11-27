@@ -7,7 +7,7 @@ Runs the **MEOVV 2026 Yearbook** fan event (Nov 2 – Nov 22) on Discord:
 | **Week 1 · Nov 2–8** | Posts the kickoff announcement. Fans nominate with `/nominate member` (superlatives) and `/nominate moment` (2026 content and moments, with an optional link). Autocomplete suggests what other fans already nominated, so duplicates group together. |
 | **Week 2 · Nov 9–15** | The top nominations become **native Discord polls**, posted automatically every day. Each poll links the nominated content so fans can rewatch it before voting. |
 | **Week 3 · Nov 16–22** | Posts *"What MEOVV moment made your 2026?"* with a **💌 Share your moment** button (or `/moment`), then runs the retrospective polls. |
-| **Reveal · Nov 22** | Builds the yearbook (Member Superlatives, 2026 Fan Favorites, MEOVV Moments of 2026, featured fan responses) as **PNG pages** and posts them, one message per page. |
+| **Reveal · Nov 22** | Builds the yearbook (Member Superlatives, In the Fans' Words, 2026 Fan Favorites, MEOVV Moments of 2026, fan memories) as **PNG pages** and posts them, one message per page. |
 
 Staff stay in control with `/yb`. They can merge duplicate nominations, fix names and links, exclude spam, preview or override polls, pick featured fan responses, and publish the yearbook.
 
@@ -69,7 +69,8 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 - `nominations view | merge | rename | link | exclude`: curate nominees before Week 2
 - `user view | remove`: everything one fan nominated and shared, or wipe it (spam). The `user` option takes an @mention, or type their username or ID.
 - `poll preview | post | end | results`: check or override polls. `post options:"A | B=https://… | C"` posts hand-picked answers.
-- `memories list | feature | unfeature | remove`: choose fan responses for the yearbook, optionally credited anonymously
+- `review [type] [show]`: 🏁 step through fan writing one card at a time with **✅ Approve · 🕶️ Approve anonymously · ❌ Reject · ⏭️ Skip** buttons. Covers 💌 fan moments (`/moment` responses) and 🏆 nomination notes (the *why* on `/nominate member`). Only approved entries go in the yearbook. `show:approved` or `show:rejected` lets you change your mind. A fan who edits their entry sends it back to pending.
+- `memories list | feature | unfeature | remove`: browse fan moments, or approve one by number
 - `yearbook preview | approve | lock | publish`: private preview of the PNG pages with a checklist; `approve` (bot owner or Manage Server only) unlocks publishing; `publish` posts the reveal to the event channel
 - `schedule list | run | retry`: view the automatic timeline, run an item now, or retry a failed one
 
@@ -81,7 +82,7 @@ Each fan gets one nomination per category. Nominating again replaces the earlier
 4. **Before each poll:** `/yb poll preview category:…` shows exactly which answers will post. Polls go out automatically at the scheduled times.
 5. **During Week 2 and 3:** results arrive in the log channel as each poll closes. Ties are flagged.
 6. **Before Nov 16:** fill in `options` for any Week 3 retrospective poll you want hand-picked in `config/yearbook.config.js`, then restart the bot. Without that, the bot pulls the top Week 1 nominations from the poll's `sources`.
-7. **Nov 16–22:** use `/yb memories list` to review responses and `/yb memories feature id:…` to pick the ones for the yearbook.
+7. **Nov 16–22:** run `/yb review` to approve or reject fan moments and nomination notes. The reveal checklist flags anything still pending.
 8. **Nov 22:** the bot posts a checklist in the log channel. Run `/yb yearbook preview`, resolve anything flagged, have an admin run `/yb yearbook approve`, then `/yb yearbook publish confirm:true`. Nothing publishes, by hand or on schedule, until it is approved. The pages are 1080×1350 PNGs, ready for socials too.
 
 > Discord polls show results publicly once they close, so the reveal reveals the full yearbook rather than individual winners for the first time.
@@ -97,6 +98,8 @@ Set `YEARBOOK_NOW=2026-11-09T11:58` in `.env` to make the bot think it's that ti
 - **Poll timing:** `polls.postTimes` sets the posting times, `polls.durationHours` sets how long polls stay open (48h by default), and every poll is cut off at least `closeBeforeRevealHours` before the reveal.
 - **Finalists:** `polls.finalistsPerPoll` (default 5, Discord's maximum is 10) sets how many top nominations make each Week 2 poll. `polls.superlativeFinalists` (default 3) shortlists the most-nominated members for each superlative poll; ties go to whoever was nominated first. Poll answers are limited to 55 characters, and `/yb nominations rename` sets a clean display name.
 - **Yearbook sections:** a category's `section` (`favorites` or `moments`) decides where its winner appears.
+- **Members:** each member's `emoji` (a heart) is used in polls and review cards, and their `color` prints their name in the yearbook pages. Approved nomination notes appear in *In the Fans' Words*, grouped by superlative with the winner first (🏁).
+- **Fonts:** Anton, Cinzel and Noto Color Emoji (all SIL Open Font License) live in `assets/fonts`; emoji fall back to Noto Color Emoji on every page.
 
 ## Development
 

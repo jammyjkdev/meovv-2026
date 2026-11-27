@@ -6,6 +6,7 @@ const { allCategories, findCategory, currentPhase, PHASE_LABELS, ts, START_JOB }
 const { ranked, pollOptions } = require('../services/nominations');
 const polls = require('../services/polls');
 const yearbook = require('../services/yearbook');
+const review = require('../services/review');
 const scheduler = require('../services/scheduler');
 const { entries: logEntry } = require('../services/staffLog');
 const { phaseAnnouncement, reminderMessage } = require('../services/announcements');
@@ -50,6 +51,23 @@ const data = () =>
         )
         .addBooleanOption((o) => o.setName('ping').setDescription('Ping the announcement role (default: no)'))
         .addChannelOption((o) => o.setName('channel').setDescription('Post somewhere other than the event channel')),
+    )
+    .addSubcommand((s) =>
+      s.setName('review').setDescription('🏁 Approve or reject fan moments and nomination notes for the yearbook, one at a time')
+        .addStringOption((o) =>
+          o.setName('type').setDescription('What to review (default: everything)').addChoices(
+            { name: '💌 + 🏆 Everything', value: 'all' },
+            { name: '💌 Fan moments (/moment responses)', value: 'moments' },
+            { name: '🏆 Nomination notes ("why" on /nominate member)', value: 'notes' },
+          ),
+        )
+        .addStringOption((o) =>
+          o.setName('show').setDescription('Which entries (default: pending)').addChoices(
+            { name: '🕒 Pending', value: 'pending' },
+            { name: '✅ Approved (to change your mind)', value: 'approved' },
+            { name: '❌ Rejected (to change your mind)', value: 'rejected' },
+          ),
+        ),
     )
     .addSubcommandGroup((g) =>
       g.setName('nominations').setDescription('Review and clean up nominations')
@@ -189,10 +207,10 @@ function parseOptions(raw) {
 
 async function status(interaction, ctx) {
   const phase = currentPhase();
-  const [counts, nominators, mem, allPolls, done] = await Promise.all([
+  const [counts, nominators, rc, allPolls, done] = await Promise.all([
     ctx.db.nominationCounts(),
     ctx.db.nominatorCount(),
-    ctx.db.countMemories(),
+    review.counts(ctx.db),
     ctx.db.allPolls(),
     ctx.db.allJobs(),
   ]);
@@ -206,7 +224,8 @@ async function status(interaction, ctx) {
     .addFields(
       { name: 'Nominations', value: `${totalNoms} from ${nominators} fans`, inline: true },
       { name: 'Polls', value: `${allPolls.filter((p) => p.status === 'open').length} open · ${allPolls.filter((p) => p.status === 'closed').length} closed`, inline: true },
-      { name: 'Fan responses', value: `${mem.total ?? 0} (${mem.featured ?? 0} featured)`, inline: true },
+      { name: '💌 Fan moments', value: `${rc.memory.approved} ✅ · ${rc.memory.pending} 🕒 · ${rc.memory.rejected} ❌`, inline: true },
+      { name: '🏆 Nomination notes', value: `${rc.reason.approved} ✅ · ${rc.reason.pending} 🕒 · ${rc.reason.rejected} ❌`, inline: true },
       { name: 'Next up', value: upcoming.map((j) => `${ts(j.at, 'f')} · \`${j.key}\``).join('\n') || '—' },
     );
   const failed = [...done.values()].filter((j) => j.status !== 'done');
@@ -227,6 +246,20 @@ async function announce(interaction) {
   const msg = await channel.send({ ...message, content, allowedMentions: { roles: ping && config.env.pingRoleId ? [config.env.pingRoleId] : [] } });
   await interaction.editReply(`📣 Posted → ${msg.url}`);
   return audit(interaction, `re-posted the **${which}** message${ping ? ' with a ping' : ''} → ${msg.url}`);
+}
+
+/** `/yb review`: the first entry of the chosen queue; the buttons (handled in `reviewButton`) do the rest. */
+async function startReview(interaction, ctx) {
+  const view = { type: interaction.options.getString('type') ?? 'all', status: interaction.options.getString('show') ?? 'pending', offset: 0 };
+  return interaction.reply({ ...(await review.render(ctx.db, view)), flags: ephemeral });
+}
+
+/** Approve / reject / skip buttons on a review card. */
+async function reviewButton(interaction, ctx) {
+  if (!isStaff(interaction)) return interaction.reply({ content: 'Staff only.', flags: ephemeral });
+  const { message, audit: line } = await review.handle(ctx.db, interaction.customId);
+  await interaction.update(message);
+  if (line) await audit(interaction, line);
 }
 
 async function nominationsGroup(sub, interaction, ctx) {
@@ -348,7 +381,7 @@ async function memoriesGroup(sub, interaction, ctx) {
     const embed = new EmbedBuilder()
       .setColor(config.event.color)
       .setTitle(`💌 Responses — page ${page}`)
-      .setFooter({ text: `${total ?? 0} total · ${featured ?? 0} featured · /yb memories feature id:<#>` });
+      .setFooter({ text: `${total ?? 0} total · ${featured ?? 0} approved · step through them with /yb review` });
     for (const m of rows) {
       embed.addFields({ name: `#${m.id} ${m.featured ? '⭐ ' : ''}${truncate(m.user_name, 80)}${m.anonymous ? ' (anon)' : ''}`, value: truncate(m.text, 1000) });
     }
@@ -361,12 +394,12 @@ async function memoriesGroup(sub, interaction, ctx) {
   const who = `response #${id} by <@${memory.user_id}>`;
   if (sub === 'feature') {
     const anonymous = interaction.options.getBoolean('anonymous') ?? false;
-    await ctx.db.updateMemory(id, { featured: true, anonymous });
+    await ctx.db.updateMemory(id, { featured: true, reviewed: true, anonymous });
     await interaction.reply({ content: `⭐ Featured #${id}.`, flags: ephemeral });
     return audit(interaction, `featured ${who}${anonymous ? ' (anonymous)' : ''}`);
   }
   if (sub === 'unfeature') {
-    await ctx.db.updateMemory(id, { featured: false });
+    await ctx.db.updateMemory(id, { featured: false, reviewed: true });
     await interaction.reply({ content: `Un-featured #${id}.`, flags: ephemeral });
     return audit(interaction, `un-featured ${who}`);
   }
@@ -392,7 +425,8 @@ async function yearbookGroup(sub, interaction, ctx) {
 
   await interaction.deferReply({ flags: ephemeral });
   const book = await yearbook.compile(ctx.db);
-  const issues = yearbook.problems(book);
+  const rc = await review.counts(ctx.db);
+  const issues = yearbook.problems(book, { memory: rc.memory.pending, reason: rc.reason.pending });
   const approval = await yearbook.approval(ctx.db);
   const lockLine = approval ? `🔓 Approved by <@${approval.by}>` : '🔒 Locked — an admin must run `/yb yearbook approve` before it can be published';
   if (sub === 'preview') {
@@ -458,8 +492,9 @@ async function execute(interaction, ctx) {
   const sub = interaction.options.getSubcommand();
   if (!group && sub === 'status') return status(interaction, ctx);
   if (!group && sub === 'announce') return announce(interaction);
+  if (!group && sub === 'review') return startReview(interaction, ctx);
   const handlers = { nominations: nominationsGroup, user: userGroup, poll: pollGroup, memories: memoriesGroup, yearbook: yearbookGroup, schedule: scheduleGroup };
   return handlers[group](sub, interaction, ctx);
 }
 
-module.exports = { yb: { data, execute, autocomplete: (i, ctx) => (isStaff(i) ? autocomplete(i, ctx) : i.respond([])) }, parseOptions };
+module.exports = { reviewButton, isStaff, yb: { data, execute, autocomplete: (i, ctx) => (isStaff(i) ? autocomplete(i, ctx) : i.respond([])) }, parseOptions };

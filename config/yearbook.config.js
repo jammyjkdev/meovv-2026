@@ -37,11 +37,13 @@ module.exports = {
   color: 0x010101,
 
   members: [
-    { id: 'sooin', name: 'SOOIN', emoji: '🐱' },
-    { id: 'gawon', name: 'GAWON', emoji: '🐱' },
-    { id: 'anna', name: 'ANNA', emoji: '🐱' },
-    { id: 'narin', name: 'NARIN', emoji: '🐱' },
-    { id: 'ella', name: 'ELLA', emoji: '🐱' },
+    // emoji: poll answers and review cards · color: review cards and the member's name in the yearbook pages
+    // (GAWON's 🖤 is printed as charcoal grey in Discord and a lighter grey on the black yearbook pages, so it stays readable)
+    { id: 'sooin', name: 'SOOIN', emoji: '💙', color: '#5BC0F8' },
+    { id: 'gawon', name: 'GAWON', emoji: '🖤', color: '#9A9A9A' },
+    { id: 'anna', name: 'ANNA', emoji: '🤍', color: '#FFFFFF' },
+    { id: 'narin', name: 'NARIN', emoji: '🩷', color: '#FF7EB9' },
+    { id: 'ella', name: 'ELLA', emoji: '💜', color: '#A66CFF' },
   ],
 
   phases: {

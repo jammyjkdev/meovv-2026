@@ -4,6 +4,8 @@ const db = require('./db');
 const { byName } = require('./commands');
 const { openMemoryModal, submitMemory, MEMORY_MODAL_ID } = require('./commands/fan');
 const { MEMORY_BUTTON_ID } = require('./services/announcements');
+const { reviewButton } = require('./commands/admin');
+const { isReviewButton } = require('./services/review');
 const scheduler = require('./services/scheduler');
 const log = require('./lib/log')('bot');
 
@@ -60,6 +62,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId === MEMORY_BUTTON_ID) {
       log.info('button: share your moment', { user: who });
       return await openMemoryModal(interaction, ctx);
+    }
+    if (interaction.isButton() && isReviewButton(interaction.customId)) {
+      log.info(`button: review ${interaction.customId.split(':')[1]}`, { user: who });
+      return await reviewButton(interaction, ctx);
     }
     if (interaction.isModalSubmit() && interaction.customId === MEMORY_MODAL_ID) {
       log.info('modal: moment submitted', { user: who });

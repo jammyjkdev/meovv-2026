@@ -1,6 +1,7 @@
 /**
  * Renders the yearbook as PNG pages (1080×1350, black, matching the embeds).
- *   cover · member superlatives · 2026 fan favorites · MEOVV moments · fan responses (one or more pages)
+ *   cover · member superlatives · in the fans' words (approved nomination notes) · 2026 fan favorites ·
+ *   MEOVV moments · fan responses. Member names print in their member colour; emoji use Noto Color Emoji.
  */
 const path = require('node:path');
 const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
@@ -9,6 +10,7 @@ const config = require('../config');
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Cinzel.ttf'), 'Cinzel');
+GlobalFonts.registerFromPath(path.join(FONT_DIR, 'NotoColorEmoji.ttf'), 'Emoji');
 
 const W = 1080;
 const H = 1350;
@@ -19,8 +21,15 @@ const MUTED = 'rgba(255,255,255,0.55)';
 const RULE = 'rgba(255,255,255,0.18)';
 const PAPER = '#000000';
 
-const display = (px) => `${px}px Anton`;
-const label = (px) => `${px}px Cinzel`;
+// Emoji is the fallback for any glyph the text fonts don't have.
+const display = (px) => `${px}px Anton, Emoji`;
+const label = (px) => `${px}px Cinzel, Emoji`;
+
+/** A member's colour and heart when `text` is exactly a member's name (superlative winners). */
+function memberStyle(text) {
+  const m = config.event.members.find((x) => x.name.toLowerCase() === String(text).trim().toLowerCase());
+  return m ? { color: m.color ?? INK, emoji: m.emoji ?? '' } : null;
+}
 
 /** Break text into lines that fit `maxWidth` with the current ctx.font. */
 function wrap(ctx, text, maxWidth) {
@@ -84,15 +93,13 @@ function chrome(ctx, kicker, title, pageNo) {
   ctx.fillStyle = MUTED;
   ctx.font = label(20);
   ctx.textAlign = 'center';
-  ctx.fillText('VOTED BY THE FANDOM', W / 2, H - MARGIN + 10);
+  ctx.fillText('🏁  VOTED BY THE FANDOM  🏁', W / 2, H - MARGIN + 10);
   ctx.textAlign = 'left';
   return y + 40;
 }
 
 /** Lowest y content may reach on an inner page. */
 const BOTTOM = H - MARGIN - 24;
-
-const winnerText = (e) => (e.winners.length ? e.winners.map((w) => w.text).join('  &  ') : 'TBA');
 
 function renderCover(book) {
   const { canvas, ctx } = page();
@@ -109,11 +116,15 @@ function renderCover(book) {
   ctx.fillRect(MARGIN, 930, INNER, 2);
   ctx.fillStyle = MUTED;
   ctx.font = label(26);
-  ctx.fillText('MEMBER SUPERLATIVES  ·  2026 FAN FAVORITES', MARGIN, 1000);
-  ctx.fillText('MEOVV MOMENTS OF 2026  ·  FAN MEMORIES', MARGIN, 1046);
+  ctx.fillText('🏆 MEMBER SUPERLATIVES  ·  💬 IN THE FANS’ WORDS', MARGIN, 1000);
+  ctx.fillText('💿 2026 FAN FAVORITES  ·  📸 MEOVV MOMENTS  ·  💌 FAN MEMORIES', MARGIN, 1046);
+  // member hearts in their colours, then the racing flag (full opacity, or the emoji fade)
+  ctx.fillStyle = INK;
+  ctx.font = label(40);
+  ctx.fillText(`${config.event.members.map((m) => m.emoji).filter(Boolean).join(' ')}  🏎️ 🏁`, MARGIN, 1130);
   ctx.fillStyle = INK;
   ctx.font = label(24);
-  ctx.fillText(`VOTED BY THE FANDOM  ·  NOVEMBER 2026`, MARGIN, H - MARGIN - 20);
+  ctx.fillText(`🏁 VOTED BY THE FANDOM  ·  NOVEMBER 2026`, MARGIN, H - MARGIN - 20);
   void book;
   return canvas.toBuffer('image/png');
 }
@@ -122,13 +133,14 @@ function renderCover(book) {
 function measureCell(ctx, e, colW, labelPx, nameMax) {
   ctx.font = label(labelPx);
   const cat = wrap(ctx, e.title.toUpperCase(), colW).slice(0, 2);
-  const name = winnerText(e);
+  const name = e.winners.length ? e.winners.map((w) => (memberStyle(w.text) ? `${w.text} ${memberStyle(w.text).emoji}` : w.text)).join('  &  ') : 'TBA';
   const px = fit(ctx, name, colW, display, nameMax, 30);
   ctx.font = display(px);
   const lines = wrap(ctx, name, colW).slice(0, 2);
   const votes = Boolean(e.totalVotes && e.winners.length);
   const h = 14 + cat.length * (labelPx + 6) + 6 + px * 0.85 + (lines.length - 1) * px + (votes ? 30 : 4) + 26;
-  return { e, cat, px, lines, votes, h, labelPx };
+  const solo = e.winners.length === 1 ? memberStyle(e.winners[0].text) : null;
+  return { e, cat, px, lines, votes, h, labelPx, color: solo?.color ?? null };
 }
 
 function drawCell(ctx, c, x, top, colW) {
@@ -136,7 +148,7 @@ function drawCell(ctx, c, x, top, colW) {
   ctx.font = label(c.labelPx);
   c.cat.forEach((l, j) => ctx.fillText(l, x, top + 14 + (j + 1) * (c.labelPx + 6) - 6));
   const nameTop = top + 14 + c.cat.length * (c.labelPx + 6) + 6;
-  ctx.fillStyle = c.e.winners.length ? INK : MUTED;
+  ctx.fillStyle = c.e.winners.length ? (c.color ?? INK) : MUTED;
   ctx.font = display(c.px);
   c.lines.forEach((l, j) => ctx.fillText(l, x, nameTop + c.px * 0.85 + j * c.px));
   let y = nameTop + c.px * 0.85 + (c.lines.length - 1) * c.px;
@@ -213,7 +225,7 @@ function renderMemories(book, firstPageNo) {
   let pageNo = firstPageNo;
   while (i < blocks.length) {
     const { canvas, ctx } = page();
-    let y = chrome(ctx, 'Year in Review', config.event.memories.prompt, String(pageNo++).padStart(2, '0'));
+    let y = chrome(ctx, '💌 Year in Review', config.event.memories.prompt, String(pageNo++).padStart(2, '0'));
     const bottom = BOTTOM;
     let placed = 0;
     while (i < blocks.length && (y + blocks[i].height <= bottom || placed === 0)) {
@@ -240,6 +252,69 @@ function renderMemories(book, firstPageNo) {
 }
 
 /**
+ * "In the fans' words": approved nomination notes under each superlative, member names in their colour.
+ * Flows across as many pages as needed; returns one buffer per page.
+ */
+function renderNotes(book, firstPageNo) {
+  const lineH = 36;
+  const quotePx = 26;
+  const bodyW = INNER - 40;
+  const { ctx: m } = page();
+  // flatten into blocks: category heading, member heading, quotes
+  const blocks = [];
+  for (const cat of book.notes) {
+    blocks.push({ type: 'cat', text: `🏆  ${cat.title.toUpperCase()}`, h: 64 });
+    for (const g of cat.groups) {
+      blocks.push({ type: 'member', text: `${g.member} ${g.emoji ?? ''}${g.winner ? '  🏁' : ''}`, color: g.color ?? INK, h: 62 });
+      for (const n of g.notes) {
+        m.font = label(quotePx);
+        const lines = wrap(m, `“${n.text}”`, bodyW);
+        blocks.push({ type: 'quote', lines, author: n.author, color: g.color ?? RULE, h: lines.length * lineH + 52 });
+      }
+    }
+  }
+
+  const out = [];
+  let i = 0;
+  let pageNo = firstPageNo;
+  while (i < blocks.length) {
+    const { canvas, ctx } = page();
+    let y = chrome(ctx, out.length ? '💬 Section one · continued' : '💬 Section one · fan notes', 'IN THE FANS’ WORDS', String(pageNo++).padStart(2, '0'));
+    let placed = 0;
+    while (i < blocks.length) {
+      const b = blocks[i];
+      // keep headings with at least one quote after them
+      const need = b.type === 'quote' ? b.h : b.h + (blocks[i + 1]?.h ?? 0) + (b.type === 'cat' ? (blocks[i + 2]?.h ?? 0) : 0);
+      if (placed && y + need > BOTTOM) break;
+      if (b.type === 'cat') {
+        if (placed) y += 16;
+        ctx.fillStyle = MUTED;
+        ctx.font = label(24);
+        ctx.fillText(b.text, MARGIN, y + 34);
+      } else if (b.type === 'member') {
+        ctx.fillStyle = b.color;
+        ctx.font = display(44);
+        ctx.fillText(b.text, MARGIN, y + 46);
+      } else {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(MARGIN, y + 6, 4, b.lines.length * lineH);
+        ctx.fillStyle = INK;
+        ctx.font = label(quotePx);
+        b.lines.forEach((l, j) => { if (y + (j + 1) * lineH <= BOTTOM) ctx.fillText(l, MARGIN + 40, y + (j + 1) * lineH); });
+        ctx.fillStyle = MUTED;
+        ctx.font = label(18);
+        ctx.fillText(`—  ${b.author.toUpperCase()}`, MARGIN + 40, y + b.lines.length * lineH + 32);
+      }
+      y += b.h;
+      i++;
+      placed++;
+    }
+    out.push(canvas.toBuffer('image/png'));
+  }
+  return out;
+}
+
+/**
  * Every page of the yearbook as PNG buffers, in reading order.
  * @returns {Array<{name:string, buffer:Buffer}>}
  */
@@ -247,11 +322,12 @@ function renderAll(book) {
   const pages = [{ name: 'meovv-2026-yearbook-01-cover.png', buffer: renderCover(book) }];
   let n = 2;
   const add = (slug, buffers) => buffers.forEach((buffer, i) => pages.push({ name: `meovv-2026-yearbook-${String(n++).padStart(2, '0')}-${slug}${buffers.length > 1 ? `-${i + 1}` : ''}.png`, buffer }));
-  if (book.superlatives.length) add('superlatives', renderGrid('Section one', 'MEMBER SUPERLATIVES', book.superlatives, n));
-  if (book.favorites.length) add('fan-favorites', renderGrid('Section two', '2026 FAN FAVORITES', book.favorites, n));
-  if (book.moments.length) add('moments', renderGrid('Section three', 'MEOVV MOMENTS OF 2026', book.moments, n));
+  if (book.superlatives.length) add('superlatives', renderGrid('🏆 Section one', 'MEMBER SUPERLATIVES', book.superlatives, n));
+  if (book.notes?.length) add('fan-notes', renderNotes(book, n));
+  if (book.favorites.length) add('fan-favorites', renderGrid('💿 Section two', '2026 FAN FAVORITES', book.favorites, n));
+  if (book.moments.length) add('moments', renderGrid('📸 Section three', 'MEOVV MOMENTS OF 2026', book.moments, n));
   if (book.memories.length) add('memories', renderMemories(book, n));
   return pages;
 }
 
-module.exports = { renderAll, renderCover, renderGrid, renderMemories, W, H };
+module.exports = { renderAll, renderCover, renderGrid, renderNotes, renderMemories, W, H };

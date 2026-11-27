@@ -7,9 +7,24 @@ const { renderAll } = require('../src/services/pages');
 const members = config.event.members;
 const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
 
+const superlatives = config.superlatives().map((c, i) => entry(c, i));
+const note = (author, text) => ({ author, text });
+const group = (i, winner, notes) => ({ member: members[i].name, emoji: members[i].emoji, color: members[i].color, winner, notes });
+
 const book = {
   title: config.event.eventName,
-  superlatives: config.superlatives().map((c, i) => entry(c, i)),
+  superlatives,
+  notes: [
+    { title: superlatives[0].title, groups: [
+      group(0, true, [note('Fan 1', 'Every airport look this year was a runway moment. The leather jacket in March? Iconic.'), note('A MEOVV fan', 'She never misses.')]),
+      group(3, false, [note('Fan 3', 'Red hair Narin changed the course of history.')]),
+    ] },
+    { title: superlatives[1].title, groups: [
+      group(1, true, [note('Fan 6', 'Gawon in the F1 fit. That’s the whole note. 🏎️')]),
+      group(4, false, [note('Fan 7', 'Ella’s vocals at the year-end stage gave me chills, start to finish, no notes, perfect.')]),
+      group(2, false, [note('Fan 8', 'Anna carried the variety shows this year and deserves recognition for it.')]),
+    ] },
+  ],
   favorites: [
     { title: 'Favorite MEOVV Song', winners: [{ text: 'GO HARD', votes: 71 }], totalVotes: 140 },
     { title: 'Favorite Music Video', winners: [{ text: 'DDI RO RI', votes: 58 }], totalVotes: 131 },
