@@ -7,7 +7,7 @@ const { MEMORY_BUTTON_ID } = require('./services/announcements');
 const { reviewButton } = require('./commands/admin');
 const { isReviewButton } = require('./services/review');
 const scheduler = require('./services/scheduler');
-const { logoReady } = require('./services/pages');
+const { assetsReady } = require('./services/pages');
 const log = require('./lib/log')('bot');
 
 const required = ['token', 'guildId', 'mongoUri', 'announceChannelId', 'pollChannelId'];
@@ -104,7 +104,8 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   log.info('Starting MEOVV 2026 Yearbook bot', { node: process.version, logLevel: process.env.LOG_LEVEL ?? 'info' });
   log.info('Connecting to MongoDB…');
   ctx.db = await db.open(config.env.mongoUri);
-  log.info((await logoReady) ? 'Yearbook cover: using assets/logo' : 'Yearbook cover: no assets/logo.png or logo.svg, printing MEOVV as text');
+  const art = await assetsReady;
+  log.info(`Yearbook artwork: ${art.logo ? 'logo' : 'no logo (cover prints MEOVV as text)'}, ${art.covers} album cover(s) in assets/covers`);
   log.info('Logging in to Discord…');
   await client.login(config.env.token);
 })().catch((err) => {

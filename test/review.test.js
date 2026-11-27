@@ -44,3 +44,12 @@ test('every member has a heart and a colour', () => {
     assert.match(m.color, /^#[0-9A-F]{6}$/i, m.id);
   }
 });
+
+test('fan favorites print as one page of album sleeves, however many categories', () => {
+  const { renderAlbums } = require('../src/services/pages');
+  const fav = (i) => ({ id: `c${i}`, title: `Category ${i}`, winners: [{ text: `A rather long winning title number ${i}`, votes: 5 }], totalVotes: 9 });
+  for (const n of [3, 12, 16]) {
+    const pages = renderAlbums('💿 Fan favorites', '2026 FAN FAVORITES', Array.from({ length: n }, (_, i) => fav(i)), 5);
+    assert.equal(pages.length, 1, `${n} favorites`);
+  }
+});

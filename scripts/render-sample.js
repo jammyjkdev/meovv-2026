@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../src/config');
-const { renderAll, logoReady } = require('../src/services/pages');
+const { renderAll, assetsReady } = require('../src/services/pages');
 
 const members = config.event.members;
 const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, emoji: c.emoji, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
@@ -55,7 +55,7 @@ const book = {
   ],
 };
 
-logoReady.then(() => {
+assetsReady.then(() => {
   const dir = path.join(config.env.dataDir, 'previews');
   fs.mkdirSync(dir, { recursive: true });
   for (const f of fs.readdirSync(dir)) if (f.endsWith('.png')) fs.unlinkSync(path.join(dir, f));

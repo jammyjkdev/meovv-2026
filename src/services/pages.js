@@ -2,31 +2,52 @@
  * Renders the yearbook as PNG pages (1080×1350, black, matching the embeds).
  *   cover · member superlatives · in the fans' words (approved nomination notes) · 2026 fan favorites ·
  *   MEOVV moments · fan responses. Member names print in their member colour; emoji use Noto Color Emoji.
+ * Fan favorites are album sleeves on one page; fan writing prints on tilted paper cards with tape and stickers.
  */
 const path = require('node:path');
 const fs = require('node:fs');
 const { createCanvas, GlobalFonts, Image } = require('@napi-rs/canvas');
 const config = require('../config');
+const { normalize } = require('../lib/text');
 
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Cinzel.ttf'), 'Cinzel');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'NotoColorEmoji.ttf'), 'Emoji');
 
+const ASSETS = path.join(__dirname, '..', '..', 'assets');
+
+/** Decode an image file; resolves to the Image, or null if it can't be read. */
+function decode(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    try { img.src = fs.readFileSync(file); } catch { resolve(null); }
+  });
+}
+
 /**
- * The MEOVV logo for the cover: assets/logo.png or assets/logo.svg (white or light on transparent works best).
- * Without one, the cover prints MEOVV in type. Images decode in the background, so the logo is loaded
- * when this module is first required and `logoReady` resolves once it can be drawn.
+ * Artwork, loaded when this module is first required (images decode in the background, so `assetsReady`
+ * resolves once everything can be drawn):
+ *   assets/logo.png|svg     the MEOVV logo for the cover (white on transparent); without it the cover prints MEOVV as text
+ *   assets/covers/<name>.*  album/single covers for the Fan Favorites page, named after the winner ("go-hard.jpg")
+ *                           or the category id ("song.png"); winners without art get a printed sleeve with the title
  */
 let LOGO = null;
-const logoReady = new Promise((resolve) => {
-  const file = ['logo.svg', 'logo.png'].map((n) => path.join(__dirname, '..', '..', 'assets', n)).find((f) => fs.existsSync(f));
-  if (!file) return resolve(false);
-  const img = new Image();
-  img.onload = () => { LOGO = img; resolve(true); };
-  img.onerror = () => resolve(false);
-  img.src = fs.readFileSync(file);
-});
+const COVERS = new Map();
+const assetsReady = (async () => {
+  const logo = ['logo.svg', 'logo.png'].map((n) => path.join(ASSETS, n)).find((f) => fs.existsSync(f));
+  if (logo) LOGO = await decode(logo);
+  const dir = path.join(ASSETS, 'covers');
+  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /\.(png|jpe?g|webp|svg)$/i.test(f)) : [];
+  for (const f of files) {
+    const img = await decode(path.join(dir, f));
+    if (img) COVERS.set(normalize(f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')).replace(/\s+/g, '-'), img);
+  }
+  return { logo: Boolean(LOGO), covers: COVERS.size };
+})();
+const logoReady = assetsReady.then((a) => a.logo);
 
 const W = 1080;
 const H = 1350;
@@ -36,6 +57,10 @@ const INK = '#ffffff';
 const MUTED = 'rgba(255,255,255,0.55)';
 const RULE = 'rgba(255,255,255,0.18)';
 const PAPER = '#000000';
+// printed-paper tones for cards and sleeves (no neon)
+const CREAM = '#EEE8DC';
+const INK_DARK = '#1E1B18';
+const TAPE = 'rgba(214,200,168,0.78)';
 
 // Emoji is the fallback for any glyph the text fonts don't have.
 const display = (px) => `${px}px Anton, Emoji`;
@@ -145,6 +170,97 @@ function renderCover(book) {
   return canvas.toBuffer('image/png');
 }
 
+// ── shared randomness ─────────────────────────────────────────────
+// Layouts are deliberately a little off: tilts, nudges, tape and stickers. All of it comes from a hash of
+// the content, so the preview and the published pages always match.
+
+/** Stable 32-bit hash of a string. */
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+/** A repeatable number in [min, max) for `key` (use different `salt`s for independent values). */
+function rand(key, salt, min, max) {
+  return min + (hash(`${salt}|${key}`) % 10000) / 10000 * (max - min);
+}
+
+const deg = (d) => (d * Math.PI) / 180;
+
+/** '#RRGGBB' → 'rgba(r,g,b,a)'. */
+function tint(hex, a) {
+  const n = parseInt(String(hex ?? '#FFFFFF').replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** Mix two '#RRGGBB' colours; `t` = share of b. */
+function mix(a, b, t) {
+  const p = (h) => parseInt(String(h).replace('#', ''), 16);
+  const [x, y] = [p(a), p(b)];
+  const ch = (s) => Math.round(((x >> s) & 255) * (1 - t) + ((y >> s) & 255) * t);
+  return `#${[16, 8, 0].map((s) => ch(s).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Draw `fn` rotated by `angle` about the centre of the box (x, y, w, h). */
+function tilted(ctx, x, y, w, h, angle, fn) {
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, -h / 2);
+  fn();
+  ctx.restore();
+}
+
+/** A strip of paper tape centred at (x, y). */
+function tape(ctx, x, y, angle, len = 96) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = TAPE;
+  ctx.fillRect(-len / 2, -13, len, 26);
+  // torn ends
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let i = -13; i < 13; i += 6) {
+    ctx.fillRect(-len / 2, i, 3, 3);
+    ctx.fillRect(len / 2 - 3, i + 3, 3, 3);
+  }
+  ctx.restore();
+}
+
+/** Tape for a card: across the top, or two corner pieces, chosen per card. */
+function tapeCard(ctx, w, h, seedKey) {
+  const style = hash(`tape|${seedKey}`) % 3;
+  if (style === 0) tape(ctx, w * rand(seedKey, 't1', 0.3, 0.7), 0, deg(rand(seedKey, 't2', -6, 6)));
+  else if (style === 1) {
+    tape(ctx, 10, 10, deg(-40), 80);
+    tape(ctx, w - 10, h - 10, deg(-40), 80);
+  } else {
+    tape(ctx, w - 12, 8, deg(38), 80);
+    tape(ctx, 16, h - 6, deg(30), 70);
+  }
+}
+
+const STICKERS = ['🏁', '🐱', '⭐', '💿', '🎀', '🏎️', '📸', '🖤', '✨'];
+
+/** Some cards get an emoji sticker slapped on a corner. */
+function maybeSticker(ctx, w, h, seedKey, chance = 0.4) {
+  if (rand(seedKey, 's0', 0, 1) > chance) return;
+  const emoji = STICKERS[hash(`st|${seedKey}`) % STICKERS.length];
+  const corner = hash(`sc|${seedKey}`) % 3;
+  const [x, y] = [[w - 18, -14], [w - 26, h - 10], [-14, h - 18]][corner];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(deg(rand(seedKey, 's1', -25, 25)));
+  ctx.font = label(rand(seedKey, 's2', 40, 58) | 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 0, 0);
+  ctx.restore();
+}
+
+// ── category → winner grids (superlatives, moments) ─────────────
+
 /** Measure one category → winner cell at a given maximum name size. */
 function measureCell(ctx, e, colW, labelPx, nameMax) {
   ctx.font = label(labelPx);
@@ -160,28 +276,33 @@ function measureCell(ctx, e, colW, labelPx, nameMax) {
   return { e, cat, px, lines, votes, h, labelPx, color: solo?.color ?? null };
 }
 
+/** A cell, tilted and nudged a little so the grid doesn't read as a spreadsheet. */
 function drawCell(ctx, c, x, top, colW) {
-  ctx.fillStyle = MUTED;
-  ctx.font = label(c.labelPx);
-  c.cat.forEach((l, j) => ctx.fillText(l, x, top + 14 + (j + 1) * (c.labelPx + 6) - 6));
-  const nameTop = top + 14 + c.cat.length * (c.labelPx + 6) + 6;
-  ctx.fillStyle = c.e.winners.length ? (c.color ?? INK) : MUTED;
-  ctx.font = display(c.px);
-  c.lines.forEach((l, j) => ctx.fillText(l, x, nameTop + c.px * 0.85 + j * c.px));
-  let y = nameTop + c.px * 0.85 + (c.lines.length - 1) * c.px;
-  if (c.votes) {
+  const key = c.e.id ?? c.e.title;
+  const angle = deg(rand(key, 'cell-a', -2.2, 2.2));
+  const dx = rand(key, 'cell-x', -10, 14);
+  tilted(ctx, x + dx, top, colW, c.h, angle, () => {
     ctx.fillStyle = MUTED;
-    ctx.font = label(18);
-    const pct = Math.round((c.e.winners[0].votes / c.e.totalVotes) * 100);
-    ctx.fillText(`${c.e.winners.length > 1 ? 'TIE  ·  ' : ''}${pct}% OF ${c.e.totalVotes} VOTES`, x, y + 30);
-    y += 30;
-  }
-  ctx.fillStyle = RULE;
-  ctx.fillRect(x, top + c.h - 12, colW, 1);
+    ctx.font = label(c.labelPx);
+    c.cat.forEach((l, j) => ctx.fillText(l, 0, 14 + (j + 1) * (c.labelPx + 6) - 6));
+    const nameTop = 14 + c.cat.length * (c.labelPx + 6) + 6;
+    ctx.fillStyle = c.e.winners.length ? (c.color ?? INK) : MUTED;
+    ctx.font = display(c.px);
+    c.lines.forEach((l, j) => ctx.fillText(l, 0, nameTop + c.px * 0.85 + j * c.px));
+    const y = nameTop + c.px * 0.85 + (c.lines.length - 1) * c.px;
+    if (c.votes) {
+      ctx.fillStyle = MUTED;
+      ctx.font = label(18);
+      const pct = Math.round((c.e.winners[0].votes / c.e.totalVotes) * 100);
+      ctx.fillText(`${c.e.winners.length > 1 ? 'TIE  ·  ' : ''}${pct}% OF ${c.e.totalVotes} VOTES`, 0, y + 30);
+    }
+    ctx.fillStyle = RULE;
+    ctx.fillRect(0, c.h - 12, colW * rand(key, 'cell-r', 0.55, 1), 1);
+  });
 }
 
 /**
- * Category → winner grid for superlatives, favorites and moments. Rows size to their content,
+ * Category → winner grid for superlatives and moments. Rows size to their content,
  * type shrinks to fit the page, and anything left spills onto a continuation page.
  * @returns {Buffer[]} one buffer per page
  */
@@ -198,11 +319,11 @@ function renderGrid(kicker, title, entries, firstPageNo) {
   let rows;
   let total;
   for (const nameMax of cols === 2 ? [64, 56, 48] : [84, 72, 60]) {
-    const cells = entries.map((e) => measureCell(probe, e, colW, labelPx, nameMax));
+    const cells = entries.map((e) => measureCell(probe, e, colW - 16, labelPx, nameMax));
     rows = [];
     for (let i = 0; i < cells.length; i += cols) {
       const row = cells.slice(i, i + cols);
-      rows.push({ cells: row, h: Math.max(...row.map((c) => c.h)) });
+      rows.push({ cells: row, h: Math.max(...row.map((c) => c.h)) + 8 });
     }
     total = rows.reduce((n, r) => n + r.h, 0);
     if (total <= available) break;
@@ -218,108 +339,180 @@ function renderGrid(kicker, title, entries, firstPageNo) {
     const { canvas, ctx } = page();
     let y = chrome(ctx, p ? `${kicker} · continued` : kicker, title, String(firstPageNo + p).padStart(2, '0'));
     for (const row of chunk) {
-      row.cells.forEach((c, j) => drawCell(ctx, { ...c, h: row.h }, MARGIN + j * (colW + gap), y, colW));
+      row.cells.forEach((c, j) => drawCell(ctx, { ...c, h: row.h - 8 }, MARGIN + j * (colW + gap), y, colW - 16));
       y += row.h;
     }
     return canvas.toBuffer('image/png');
   });
 }
 
-// ── scrapbook cards (fan notes + fan memories) ───────────────────
-// Quotes print as cards that are deliberately a little off: each has its own tilt, width and side,
-// short ones pair up side by side, and a strip of "tape" holds each one down. Everything derives from
-// a hash of the text, so the preview and the published pages always match.
+// ── 2026 fan favorites: album sleeves ────────────────────────────
 
-/** Stable 32-bit hash of a string. */
-function hash(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
-  return h >>> 0;
+/** Sleeve colours for winners without cover art: muted, printed-paper tones. */
+const SLEEVES = ['#C9BFAE', '#8FA3B0', '#B49AA4', '#9E9AB4', '#A8A59A', '#7E7A74', '#C2A88E', '#8C9B8B'];
+
+/** Cover art for a winner: assets/covers/<winner>.png, the category id, or a cover named inside the winner. */
+function coverFor(e) {
+  const slug = (t) => normalize(t).replace(/\s+/g, '-');
+  const w = e.winners[0] ? slug(e.winners[0].text) : '';
+  if (COVERS.has(w)) return COVERS.get(w);
+  if (e.id && COVERS.has(e.id)) return COVERS.get(e.id);
+  // "GO HARD at Music Bank" → go-hard.png
+  const hit = [...COVERS.keys()].filter((k) => w && (w.startsWith(`${k}-`) || w.includes(`-${k}-`) || w.endsWith(`-${k}`))).sort((a, b) => b.length - a.length)[0];
+  return hit ? COVERS.get(hit) : null;
 }
 
-/** '#RRGGBB' → 'rgba(r,g,b,a)'. */
-function tint(hex, a) {
-  const n = parseInt(String(hex ?? '#FFFFFF').replace('#', ''), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+/** One record sleeve: cover art (or a printed colour block with the title), with the vinyl peeking out. */
+function drawSleeve(ctx, e, x, y, s, i) {
+  const key = e.id ?? e.title;
+  const art = coverFor(e);
+  const angle = deg(rand(key, 'sl-a', -5, 5));
+  const peek = s * rand(key, 'sl-p', 0.18, 0.3);
+  tilted(ctx, x, y, s, s, angle, () => {
+    // vinyl, half out of the sleeve
+    ctx.fillStyle = '#242424';
+    ctx.beginPath();
+    ctx.arc(s / 2 + peek, s / 2, s * 0.47, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    for (let r = s * 0.2; r < s * 0.46; r += 6) { ctx.beginPath(); ctx.arc(s / 2 + peek, s / 2, r, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.fillStyle = SLEEVES[(i + 3) % SLEEVES.length];
+    ctx.beginPath();
+    ctx.arc(s / 2 + peek, s / 2, s * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+    // sleeve
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = SLEEVES[i % SLEEVES.length];
+    ctx.fillRect(0, 0, s, s);
+    ctx.shadowBlur = 0;
+    if (art) {
+      ctx.drawImage(art, 0, 0, s, s);
+    } else {
+      const title = e.winners.length ? e.winners.map((w) => w.text).join(' & ') : 'TBA';
+      // biggest type at which the title fits inside the sleeve (above the small MEOVV mark)
+      let px = 58;
+      let lines;
+      for (; px > 14; px -= 2) {
+        ctx.font = display(px);
+        lines = wrap(ctx, title, s - 28);
+        const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        if (widest <= s - 28 && 14 + lines.length * px * 1.02 <= s - 40) break;
+      }
+      ctx.fillStyle = INK_DARK;
+      ctx.font = display(px);
+      lines.forEach((l, j) => ctx.fillText(l, 14, 14 + px * 0.9 + j * px * 1.02));
+      ctx.font = label(13);
+      ctx.fillStyle = tint('#000000', 0.55);
+      ctx.fillText('MEOVV', 14, s - 14);
+    }
+    tapeCard(ctx, s, s, `sleeve|${key}`);
+    maybeSticker(ctx, s, s, `sleeve|${key}`, 0.3);
+  });
 }
 
-const CARD_PAD = 24;
+/** Every 2026 fan favorite on one page, as a scatter of album sleeves with their category underneath. */
+function renderAlbums(kicker, title, entries, pageNo) {
+  const { canvas, ctx } = page();
+  const top = chrome(ctx, kicker, title, String(pageNo).padStart(2, '0'));
+  const cols = entries.length > 9 ? 4 : 3;
+  const rows = Math.ceil(entries.length / cols);
+  const colW = INNER / cols;
+  const captionH = 70;
+  const rowH = (BOTTOM - top) / rows;
+  const s = Math.min(colW * 0.8, rowH - captionH - 30); // room for the caption and the next row's tape
+  entries.forEach((e, i) => {
+    const key = e.id ?? e.title;
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = MARGIN + col * colW + rand(key, 'al-x', -6, Math.max(-6, colW - s * 1.12));
+    const y = top + 18 + row * rowH + rand(key, 'al-y', 0, Math.max(0, rowH - s - captionH - 30));
+    drawSleeve(ctx, e, x, y, s, i);
+    // caption
+    tilted(ctx, x, y + s + 12, colW - 12, captionH - 12, deg(rand(key, 'al-c', -2.5, 2.5)), () => {
+      ctx.fillStyle = MUTED;
+      ctx.font = label(14);
+      wrap(ctx, e.title.toUpperCase(), colW - 16).slice(0, 2).forEach((l, j) => ctx.fillText(l, 0, 18 + j * 18));
+      const votes = e.totalVotes && e.winners.length ? `${e.winners.length > 1 ? 'TIE · ' : ''}${Math.round((e.winners[0].votes / e.totalVotes) * 100)}% OF ${e.totalVotes} VOTES` : '';
+      ctx.font = label(12);
+      ctx.fillText(votes, 0, 54);
+    });
+  });
+  return [canvas.toBuffer('image/png')];
+}
+
+// ── paper cards (fan notes + fan memories) ──────────────────────
+
+const CARD_PAD = 26;
 const SHORT = 90; // characters: short quotes can share a row
 
 /** Type style by length: punchy one-liners in the display face, longer ones in the serif. */
 function quoteStyle(text) {
-  if (text.length <= 60) return { font: display, px: 44, lineH: 50, upper: false };
-  if (text.length <= 160) return { font: label, px: 29, lineH: 40, upper: false };
-  return { font: label, px: 25, lineH: 35, upper: false };
+  if (text.length <= 60) return { font: display, px: 42, lineH: 48 };
+  if (text.length <= 160) return { font: label, px: 28, lineH: 38 };
+  return { font: label, px: 24, lineH: 33 };
 }
 
 /** Measure a card at width `w`. */
-function measureCard(ctx, { text, author, color }, w) {
+function measureCard(ctx, { text, color }, w) {
   const st = quoteStyle(text);
   ctx.font = st.font(st.px);
   const lines = wrap(ctx, `“${text}”`, w - CARD_PAD * 2);
   const h = CARD_PAD + lines.length * st.lineH + 8 + CARD_PAD;
-  const seed = hash(`${author}|${text}`);
-  const angle = (((seed % 9) - 4) * 0.35 + (seed % 2 ? 0.2 : -0.2)) * (Math.PI / 180); // about ±1.6°
-  return { text, author, color: color ?? '#FFFFFF', st, lines, w, h, seed, angle };
+  const angle = deg(rand(text, 'card-a', -4.5, 4.5));
+  return { text, color: color ?? '#FFFFFF', st, lines, w, h, angle };
 }
 
-/** Draw a measured card with its top-left at (x, y), rotated about its centre. */
+/** Draw a measured card with its top-left at (x, y): paper tinted with the member colour, tape, maybe a sticker. */
 function drawCard(ctx, c, x, y) {
-  ctx.save();
-  ctx.translate(x + c.w / 2, y + c.h / 2);
-  ctx.rotate(c.angle);
-  ctx.translate(-c.w / 2, -c.h / 2);
-  ctx.beginPath();
-  ctx.roundRect(0, 0, c.w, c.h, 14);
-  ctx.fillStyle = tint(c.color, 0.09);
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = tint(c.color, 0.55);
-  ctx.stroke();
-  // tape
-  ctx.save();
-  const tx = c.w * (0.3 + (c.seed % 40) / 100);
-  ctx.translate(tx, 0);
-  ctx.rotate(((c.seed % 2 ? 1 : -1) * 4 * Math.PI) / 180);
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.fillRect(-48, -12, 96, 24);
-  ctx.restore();
-  // the quote (fans aren't credited in the book)
-  ctx.fillStyle = INK;
-  ctx.font = c.st.font(c.st.px);
-  c.lines.forEach((l, j) => ctx.fillText(l, CARD_PAD, CARD_PAD + (j + 1) * c.st.lineH - (c.st.lineH - c.st.px) / 2));
-  ctx.restore();
+  tilted(ctx, x, y, c.w, c.h, c.angle, () => {
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = mix(CREAM, c.color, 0.28);
+    ctx.fillRect(0, 0, c.w, c.h);
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = INK_DARK;
+    ctx.font = c.st.font(c.st.px);
+    c.lines.forEach((l, j) => ctx.fillText(l, CARD_PAD, CARD_PAD + (j + 1) * c.st.lineH - (c.st.lineH - c.st.px) / 2));
+    tapeCard(ctx, c.w, c.h, c.text);
+    maybeSticker(ctx, c.w, c.h, c.text);
+  });
 }
 
 /** Room a tilted card needs vertically beyond its own height. */
-const tiltRoom = (c) => Math.abs(Math.sin(c.angle)) * c.w + 12;
+const tiltRoom = (c) => Math.abs(Math.sin(c.angle)) * c.w * 0.6 + 14;
 
 /**
- * Turn a list of quotes into rows: two short quotes side by side, or one card at a varied width,
- * nudged left or right. Returns rows with a height and a draw(ctx, y) function.
+ * Turn a list of quotes into rows: two short quotes side by side, or one card at a random width and
+ * position. Returns rows with a height and a draw(ctx, y) function.
  */
 function cardRows(ctx, quotes) {
   const rows = [];
-  const gap = 30;
   for (let i = 0; i < quotes.length; i++) {
     const q = quotes[i];
     const next = quotes[i + 1];
     if (q.text.length <= SHORT && next && next.text.length <= SHORT) {
-      const half = (INNER - gap) / 2;
-      const a = measureCard(ctx, q, half);
-      const b = measureCard(ctx, next, half);
-      const dy = (hash(q.text) % 3) * 14; // stagger the pair
+      const gap = rand(q.text, 'pair-g', 20, 60);
+      const split = rand(q.text, 'pair-s', 0.42, 0.58);
+      const wa = (INNER - gap) * split;
+      const wb = INNER - gap - wa;
+      const a = measureCard(ctx, q, wa);
+      const b = measureCard(ctx, next, wb);
+      const dy = rand(q.text, 'pair-y', -10, 36);
       const h = Math.max(a.h, b.h + dy) + Math.max(tiltRoom(a), tiltRoom(b));
-      rows.push({ h, draw: (c2, y) => { drawCard(c2, a, MARGIN, y + 8); drawCard(c2, b, MARGIN + half + gap, y + 8 + dy); } });
+      rows.push({ h, draw: (c2, y) => { drawCard(c2, a, MARGIN, y + 14); drawCard(c2, b, MARGIN + wa + gap, y + 14 + dy); } });
       i++;
       continue;
     }
-    const seed = hash(q.text);
-    const w = Math.round(INNER * [0.8, 0.86, 0.92][seed % 3]);
+    const w = Math.round(INNER * rand(q.text, 'card-w', 0.62, 0.9));
     const c = measureCard(ctx, q, w);
-    const x = rows.length % 2 ? MARGIN + INNER - w : MARGIN; // alternate sides
-    rows.push({ h: c.h + tiltRoom(c), draw: (c2, y) => drawCard(c2, c, x, y + 8) });
+    const x = MARGIN + rand(q.text, 'card-x', 0, INNER - w);
+    rows.push({ h: c.h + tiltRoom(c), draw: (c2, y) => drawCard(c2, c, x, y + 14) });
   }
   return rows;
 }
@@ -349,11 +542,11 @@ function flow(rows, header) {
   return out;
 }
 
-/** Fan memories as scrapbook cards, colours cycling through the members. */
+/** Fan memories as paper cards, colours cycling through the members. */
 function renderMemories(book, firstPageNo) {
   const colors = config.event.members.map((m) => m.color).filter(Boolean);
   const { ctx } = page();
-  const quotes = book.memories.map((m, i) => ({ text: m.text, author: m.author, color: colors[i % colors.length] }));
+  const quotes = book.memories.map((m, i) => ({ text: m.text, color: colors[i % colors.length] }));
   return flow(cardRows(ctx, quotes), (c, n) =>
     chrome(c, n ? '💌 Year in Review · continued' : '💌 Year in Review', config.event.memories.prompt, String(firstPageNo + n).padStart(2, '0')));
 }
@@ -376,22 +569,24 @@ function renderNotes(book, firstPageNo) {
         c.fillText(`🏆  ${cat.title.toUpperCase()}`, MARGIN, y + (first ? 34 : 50));
       },
     });
-    cat.groups.forEach((g, gi) => {
+    cat.groups.forEach((g) => {
       const color = g.color ?? INK;
       const name = `${g.member} ${g.emoji ?? ''}${g.winner ? '  🏁' : ''}`;
-      const right = gi % 2 === 1; // member names alternate sides too
+      const key = `${cat.id}|${g.member}`;
       rows.push({
-        h: 60,
+        h: 64,
         keep: true,
         draw: (c, y) => {
-          c.fillStyle = color;
           c.font = display(46);
-          c.textAlign = right ? 'right' : 'left';
-          c.fillText(name, right ? W - MARGIN : MARGIN, y + 48);
-          c.textAlign = 'left';
+          const w = c.measureText(name).width;
+          const x = MARGIN + rand(key, 'name-x', 0, Math.max(0, INNER - w));
+          tilted(c, x, y + 4, w, 56, deg(rand(key, 'name-a', -4, 4)), () => {
+            c.fillStyle = color;
+            c.fillText(name, 0, 48);
+          });
         },
       });
-      rows.push(...cardRows(ctx, g.notes.map((n) => ({ text: n.text, author: n.author, color }))));
+      rows.push(...cardRows(ctx, g.notes.map((n) => ({ text: n.text, color }))));
     });
   }
   return flow(rows, (c, n) => chrome(c, n ? '💬 Fan notes · continued' : '💬 Fan notes', 'IN THE FANS’ WORDS', String(firstPageNo + n).padStart(2, '0')));
@@ -407,10 +602,10 @@ function renderAll(book) {
   const add = (slug, buffers) => buffers.forEach((buffer, i) => pages.push({ name: `meovv-2026-yearbook-${String(n++).padStart(2, '0')}-${slug}${buffers.length > 1 ? `-${i + 1}` : ''}.png`, buffer }));
   if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n));
   if (book.notes?.length) add('fan-notes', renderNotes(book, n));
-  if (book.favorites.length) add('fan-favorites', renderGrid('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
+  if (book.favorites.length) add('fan-favorites', renderAlbums('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
   if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n));
   if (book.memories.length) add('memories', renderMemories(book, n));
   return pages;
 }
 
-module.exports = { logoReady, renderAll, renderCover, renderGrid, renderNotes, renderMemories, W, H };
+module.exports = { assetsReady, logoReady, renderAll, renderCover, renderGrid, renderAlbums, renderNotes, renderMemories, W, H };
