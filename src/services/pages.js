@@ -93,7 +93,7 @@ function chrome(ctx, kicker, title, pageNo) {
   ctx.fillStyle = MUTED;
   ctx.font = label(20);
   ctx.textAlign = 'center';
-  ctx.fillText('🏁  VOTED BY THE FANDOM  🏁', W / 2, H - MARGIN + 10);
+  ctx.fillText(`🏁  ${config.event.credit}  ·  ${config.event.invite}  🏁`, W / 2, H - MARGIN + 10);
   ctx.textAlign = 'left';
   return y + 40;
 }
@@ -103,9 +103,6 @@ const BOTTOM = H - MARGIN - 24;
 
 function renderCover(book) {
   const { canvas, ctx } = page();
-  ctx.fillStyle = MUTED;
-  ctx.font = label(26);
-  ctx.fillText('THE', MARGIN, 300);
   ctx.fillStyle = INK;
   ctx.font = display(260);
   ctx.fillText('MEOVV', MARGIN - 8, 540);
@@ -114,17 +111,15 @@ function renderCover(book) {
   ctx.fillText('YEARBOOK', MARGIN, 860);
   ctx.fillStyle = RULE;
   ctx.fillRect(MARGIN, 930, INNER, 2);
-  ctx.fillStyle = MUTED;
-  ctx.font = label(26);
-  ctx.fillText('🏆 MEMBER SUPERLATIVES  ·  💬 IN THE FANS’ WORDS', MARGIN, 1000);
-  ctx.fillText('💿 2026 FAN FAVORITES  ·  📸 MEOVV MOMENTS  ·  💌 FAN MEMORIES', MARGIN, 1046);
   // member hearts in their colours, then the racing flag (full opacity, or the emoji fade)
   ctx.fillStyle = INK;
   ctx.font = label(40);
-  ctx.fillText(`${config.event.members.map((m) => m.emoji).filter(Boolean).join(' ')}  🏎️ 🏁`, MARGIN, 1130);
-  ctx.fillStyle = INK;
+  ctx.fillText(`${config.event.members.map((m) => m.emoji).filter(Boolean).join(' ')}  🏎️ 🏁`, MARGIN, 1010);
+  ctx.font = label(26);
+  ctx.fillText(`🏁 ${config.event.credit}`, MARGIN, H - MARGIN - 62);
+  ctx.fillStyle = MUTED;
   ctx.font = label(24);
-  ctx.fillText(`🏁 VOTED BY THE FANDOM  ·  NOVEMBER 2026`, MARGIN, H - MARGIN - 20);
+  ctx.fillText(config.event.invite, MARGIN, H - MARGIN - 20);
   void book;
   return canvas.toBuffer('image/png');
 }
@@ -279,7 +274,7 @@ function renderNotes(book, firstPageNo) {
   let pageNo = firstPageNo;
   while (i < blocks.length) {
     const { canvas, ctx } = page();
-    let y = chrome(ctx, out.length ? '💬 Section one · continued' : '💬 Section one · fan notes', 'IN THE FANS’ WORDS', String(pageNo++).padStart(2, '0'));
+    let y = chrome(ctx, out.length ? '💬 Fan notes · continued' : '💬 Fan notes', 'IN THE FANS’ WORDS', String(pageNo++).padStart(2, '0'));
     let placed = 0;
     while (i < blocks.length) {
       const b = blocks[i];
@@ -322,10 +317,10 @@ function renderAll(book) {
   const pages = [{ name: 'meovv-2026-yearbook-01-cover.png', buffer: renderCover(book) }];
   let n = 2;
   const add = (slug, buffers) => buffers.forEach((buffer, i) => pages.push({ name: `meovv-2026-yearbook-${String(n++).padStart(2, '0')}-${slug}${buffers.length > 1 ? `-${i + 1}` : ''}.png`, buffer }));
-  if (book.superlatives.length) add('superlatives', renderGrid('🏆 Section one', 'MEMBER SUPERLATIVES', book.superlatives, n));
+  if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n));
   if (book.notes?.length) add('fan-notes', renderNotes(book, n));
-  if (book.favorites.length) add('fan-favorites', renderGrid('💿 Section two', '2026 FAN FAVORITES', book.favorites, n));
-  if (book.moments.length) add('moments', renderGrid('📸 Section three', 'MEOVV MOMENTS OF 2026', book.moments, n));
+  if (book.favorites.length) add('fan-favorites', renderGrid('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
+  if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n));
   if (book.memories.length) add('memories', renderMemories(book, n));
   return pages;
 }

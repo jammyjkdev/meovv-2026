@@ -30,6 +30,9 @@ const SONGS = [
 
 module.exports = {
   eventName: 'MEOVV 2026 Yearbook',
+  // Credit printed on the yearbook cover and at the foot of every page
+  credit: 'VOTED BY THE MEOVV DISCORD COMMUNITY',
+  invite: 'discord.gg/MEOVV',
   songs: SONGS,
   timezone: 'America/New_York',
 
