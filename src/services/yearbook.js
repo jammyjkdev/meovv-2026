@@ -1,13 +1,13 @@
 const { AttachmentBuilder } = require('discord.js');
 const config = require('../config');
 const { pickWinners } = require('../lib/tally');
-const { allCategories, findMember } = require('./event');
+const { allCategories } = require('./event');
 const { renderAll } = require('./pages');
 const log = require('../lib/log')('yearbook');
 
 /**
  * Compile everything into the yearbook data structure.
- * Sections: superlatives, notes (approved "why" notes, by superlative), favorites, moments, memories.
+ * Sections: superlatives, favorites, moments, memories (approved fan moments).
  */
 async function compile(db) {
   const polls = new Map((await db.allPolls()).map((p) => [p.poll_key, p]));
@@ -31,49 +31,21 @@ async function compile(db) {
   const section = (name) => cats.filter((c) => c.section === name).map(entry);
   const memories = (await db.listMemories({ featuredOnly: true, limit: 500 })).map((m) => ({
     id: m.id,
-    author: m.anonymous ? 'A MEOVV fan' : m.user_name,
     text: m.book_text || m.text,
   }));
 
-  const superlatives = section('superlatives');
   return {
     title: config.event.eventName,
     generatedAt: new Date().toISOString(),
-    superlatives,
-    notes: groupNotes(superlatives, await db.approvedReasons()),
+    superlatives: section('superlatives'),
     favorites: section('favorites'),
     moments: section('moments'),
     memories,
   };
 }
 
-/**
- * Approved nomination notes, grouped by superlative and then member: the winner first,
- * then the other members in their usual order. Categories without approved notes are left out.
- */
-function groupNotes(superlatives, reasons) {
-  const order = config.event.members.map((m) => m.id);
-  return superlatives
-    .map((cat) => {
-      const winners = new Set(cat.winners.map((w) => findMember(w.text)?.id).filter(Boolean));
-      const byMember = new Map();
-      for (const r of reasons.filter((x) => x.category_id === cat.id)) {
-        if (!byMember.has(r.norm)) byMember.set(r.norm, []);
-        byMember.get(r.norm).push({ author: r.reason_anonymous ? 'A MEOVV fan' : r.user_name, text: r.reason_book || r.reason });
-      }
-      const groups = [...byMember.entries()]
-        .map(([id, notes]) => {
-          const m = findMember(id);
-          return { member: m?.name ?? id, emoji: m?.emoji ?? null, color: m?.color ?? null, winner: winners.has(id), notes };
-        })
-        .sort((a, b) => b.winner - a.winner || order.indexOf(findMember(a.member)?.id) - order.indexOf(findMember(b.member)?.id));
-      return { id: cat.id, title: cat.title, groups };
-    })
-    .filter((c) => c.groups.length);
-}
-
 /** Things staff should fix before publishing. */
-function problems(book, pending = null) {
+function problems(book, pendingMoments = 0) {
   const issues = [];
   for (const e of [...book.superlatives, ...book.favorites, ...book.moments]) {
     if (e.status === 'not-posted') issues.push(`**${e.title}** — poll never posted`);
@@ -82,8 +54,7 @@ function problems(book, pending = null) {
     else if (e.winners.length > 1) issues.push(`**${e.title}** — tie between ${e.winners.map((w) => w.text).join(' & ')}`);
   }
   if (!book.memories.length) issues.push('No fan moments approved yet (`/yb review`)');
-  if (pending?.memory) issues.push(`${pending.memory} fan moment(s) still waiting for review (\`/yb review type:moments\`)`);
-  if (pending?.reason) issues.push(`${pending.reason} nomination note(s) still waiting for review (\`/yb review type:notes\`)`);
+  if (pendingMoments) issues.push(`${pendingMoments} fan moment(s) still waiting for review (\`/yb review\`)`);
   return issues;
 }
 
@@ -131,4 +102,4 @@ async function publish(ctx) {
   return { url: first?.url, book };
 }
 
-module.exports = { compile, groupNotes, problems, pageFiles, publish, approval, approve, lock };
+module.exports = { compile, problems, pageFiles, publish, approval, approve, lock };

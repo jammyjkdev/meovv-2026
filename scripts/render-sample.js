@@ -8,23 +8,9 @@ const members = config.event.members;
 const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, emoji: c.emoji, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
 
 const superlatives = config.superlatives().map((c, i) => entry(c, i));
-const note = (author, text) => ({ author, text });
-const group = (i, winner, notes) => ({ member: members[i].name, emoji: members[i].emoji, color: members[i].color, winner, notes });
-
 const book = {
   title: config.event.eventName,
   superlatives,
-  notes: [
-    { title: superlatives[0].title, groups: [
-      group(0, true, [note('Fan 1', 'Every airport look this year was a runway moment. The leather jacket in March? Iconic.'), note('A MEOVV fan', 'She never misses.')]),
-      group(3, false, [note('Fan 3', 'Red hair Narin changed the course of history.')]),
-    ] },
-    { title: superlatives[1].title, groups: [
-      group(1, true, [note('Fan 6', 'Gawon in the F1 fit. That’s the whole note. 🏎️')]),
-      group(4, false, [note('Fan 7', 'Ella’s vocals at the year-end stage gave me chills, start to finish, no notes, perfect.')]),
-      group(2, false, [note('Fan 8', 'Anna carried the variety shows this year and deserves recognition for it.')]),
-    ] },
-  ],
   favorites: [
     { title: 'Favorite MEOVV Song', winners: [{ text: 'GO HARD', votes: 71 }], totalVotes: 140 },
     { title: 'Favorite Music Video', winners: [{ text: 'DDI RO RI', votes: 58 }], totalVotes: 131 },
@@ -47,11 +33,16 @@ const book = {
     { title: 'Most Unexpected MEOVV Moment', winners: [{ text: 'The surprise busking set in Hongdae that nobody saw coming', votes: 70 }], totalVotes: 140 },
   ],
   memories: [
-    { author: 'Fan 1', text: 'Seeing them live for the first time at the GO HARD showcase. I cried the whole way through TOXIC and I’m not even sorry.' },
-    { author: 'A MEOVV fan', text: 'DROP TOP got me through exams. That’s it, that’s the memory.' },
-    { author: 'jk', text: 'Finding this server. Honestly, the group chat during the comeback week was the most fun I’ve had online all year. Every teaser, every theory, every 3am stream party. ' + 'You all made 2026 feel like a shared thing instead of something I watched alone. '.repeat(4) },
-    { author: 'Fan 4', text: 'When Ella waved at my sign during the fan meet. Ten seconds that I will think about forever.' },
-    { author: 'Fan 5', text: 'Learning the DDI RO RI choreo with my little sister in the kitchen. We still can’t do the bridge part.' },
+    { text: 'Seeing them live for the first time at the GO HARD showcase. I cried the whole way through TOXIC and I’m not even sorry.' },
+    { text: 'DROP TOP got me through exams. That’s it, that’s the memory.' },
+    { text: 'Finding this server. Honestly, the group chat during comeback week was the most fun I’ve had online all year. Every teaser, every theory, every 3am stream party. You all made 2026 feel like a shared thing instead of something I watched alone.' },
+    { text: 'When Ella waved at my sign during the fan meet. Ten seconds I will think about forever.' },
+    { text: 'Learning the DDI RO RI choreo with my little sister in the kitchen. We still can’t do the bridge part.' },
+    { text: 'Gawon in the F1 fit.' },
+    { text: 'The ramen challenge live. I have never laughed that hard at 2am.' },
+    { text: 'Red hair Narin era 🩷' },
+    { text: 'Streaming GO HARD on repeat on the bus every morning until the driver knew the words.' },
+    { text: 'Sooin’s radio laugh. Iconic.' },
   ],
 };
 

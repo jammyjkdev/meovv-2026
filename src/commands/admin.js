@@ -53,16 +53,9 @@ const data = () =>
         .addChannelOption((o) => o.setName('channel').setDescription('Post somewhere other than the event channel')),
     )
     .addSubcommand((s) =>
-      s.setName('review').setDescription('🏁 Approve or reject fan moments and nomination notes for the yearbook, one at a time')
+      s.setName('review').setDescription('🏁 Approve, reject or cut down fan moments for the yearbook, one at a time')
         .addStringOption((o) =>
-          o.setName('type').setDescription('What to review (default: everything)').addChoices(
-            { name: '💌 + 🏆 Everything', value: 'all' },
-            { name: '💌 Fan moments (/moment responses)', value: 'moments' },
-            { name: '🏆 Nomination notes ("why" on /nominate member)', value: 'notes' },
-          ),
-        )
-        .addStringOption((o) =>
-          o.setName('show').setDescription('Which entries (default: pending)').addChoices(
+          o.setName('show').setDescription('Which moments (default: pending)').addChoices(
             { name: '🕒 Pending', value: 'pending' },
             { name: '✅ Approved (to change your mind)', value: 'approved' },
             { name: '❌ Rejected (to change your mind)', value: 'rejected' },
@@ -223,8 +216,7 @@ async function status(interaction, ctx) {
     .addFields(
       { name: 'Nominations', value: `${totalNoms} from ${nominators} fans`, inline: true },
       { name: 'Polls', value: `${allPolls.filter((p) => p.status === 'open').length} open · ${allPolls.filter((p) => p.status === 'closed').length} closed`, inline: true },
-      { name: '💌 Fan moments', value: `${rc.memory.approved} ✅ · ${rc.memory.pending} 🕒 · ${rc.memory.rejected} ❌`, inline: true },
-      { name: '🏆 Nomination notes', value: `${rc.reason.approved} ✅ · ${rc.reason.pending} 🕒 · ${rc.reason.rejected} ❌`, inline: true },
+      { name: '💌 Fan moments', value: `${rc.approved} ✅ · ${rc.pending} 🕒 · ${rc.rejected} ❌`, inline: true },
       { name: 'Next up', value: upcoming.map((j) => `${ts(j.at, 'f')} · \`${j.key}\``).join('\n') || '—' },
     );
   const failed = [...done.values()].filter((j) => j.status !== 'done');
@@ -249,7 +241,7 @@ async function announce(interaction) {
 
 /** `/yb review`: the first entry of the chosen queue; the buttons (handled in `reviewButton`) do the rest. */
 async function startReview(interaction, ctx) {
-  const view = { type: interaction.options.getString('type') ?? 'all', status: interaction.options.getString('show') ?? 'pending', offset: 0 };
+  const view = { status: interaction.options.getString('show') ?? 'pending', offset: 0 };
   return interaction.reply({ ...(await review.render(ctx.db, view)), flags: ephemeral });
 }
 
@@ -434,7 +426,7 @@ async function yearbookGroup(sub, interaction, ctx) {
   await interaction.deferReply({ flags: ephemeral });
   const book = await yearbook.compile(ctx.db);
   const rc = await review.counts(ctx.db);
-  const issues = yearbook.problems(book, { memory: rc.memory.pending, reason: rc.reason.pending });
+  const issues = yearbook.problems(book, rc.pending);
   const approval = await yearbook.approval(ctx.db);
   const lockLine = approval ? `🔓 Approved by <@${approval.by}>` : '🔒 Locked — an admin must run `/yb yearbook approve` before it can be published';
   if (sub === 'preview') {

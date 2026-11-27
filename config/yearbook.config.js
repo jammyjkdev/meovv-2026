@@ -33,6 +33,8 @@ module.exports = {
   // Credit printed on the yearbook cover and at the foot of every page
   credit: 'VOTED BY THE MEOVV DISCORD COMMUNITY',
   invite: 'discord.gg/MEOVV',
+  // spreads: post the inside pages two at a time as double-width images (2160×1350); false = single pages
+  yearbook: { spreads: true },
   songs: SONGS,
   timezone: 'America/New_York',
 

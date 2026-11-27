@@ -48,7 +48,7 @@ async function runJob(ctx, job, log) {
         return { status: 'done', detail: url };
       }
       const rc = await require('./review').counts(ctx.db);
-      const issues = yearbook.problems(await yearbook.compile(ctx.db), { memory: rc.memory.pending, reason: rc.reason.pending });
+      const issues = yearbook.problems(await yearbook.compile(ctx.db), rc.pending);
       await log(
         `📖 **It's reveal time!** Run \`/yb yearbook preview\` to check it, then \`/yb yearbook publish confirm:true\`.` +
           (approved ? '\n🔓 Approved for publishing.' : '\n🔒 Still locked — an admin must run `/yb yearbook approve` first.') +

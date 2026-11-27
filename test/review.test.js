@@ -1,41 +1,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const review = require('../src/services/review');
-const { groupNotes } = require('../src/services/yearbook');
-const { renderNotes } = require('../src/services/pages');
 const config = require('../src/config');
 
 test('review button ids round-trip and fit Discord’s 100-character limit', () => {
-  const view = { type: 'notes', status: 'rejected', offset: 7 };
-  const item = { kind: 'reason', id: '65f0c0ffee0123456789abcd' };
-  const id = review.buttonId('anon', item, view);
+  const view = { status: 'rejected', offset: 7 };
+  const id = review.buttonId('approve', { id: '1234' }, view);
   assert.ok(id.length <= 100, id);
   assert.ok(review.isReviewButton(id));
-  assert.deepEqual(review.parseButtonId(id), { action: 'anon', kind: 'reason', id: item.id, view });
+  assert.deepEqual(review.parseButtonId(id), { action: 'approve', id: '1234', view });
   assert.equal(review.parseButtonId('memory:submit'), null);
-  assert.equal(review.parseButtonId(review.buttonId('done', null, view)).kind, null);
+  assert.equal(review.parseButtonId(review.buttonId('done', null, view)).id, null);
 });
 
-test('approved notes group by superlative, winner first, in member colours', () => {
-  const [a, b] = config.superlatives();
-  const cats = [
-    { id: a.id, title: a.title, winners: [{ text: 'NARIN' }] },
-    { id: b.id, title: b.title, winners: [] },
-  ];
-  const reasons = [
-    { category_id: a.id, norm: 'sooin', user_name: 'Fan 1', reason: 'so stylish', reason_anonymous: false },
-    { category_id: a.id, norm: 'narin', user_name: 'Fan 2', reason: 'red hair era', reason_anonymous: true },
-    { category_id: a.id, norm: 'narin', user_name: 'Fan 3', reason: 'always', reason_anonymous: false },
-  ];
-  const notes = groupNotes(cats, reasons);
-  assert.equal(notes.length, 1, 'categories without notes are left out');
-  assert.deepEqual(notes[0].groups.map((g) => [g.member, g.winner, g.notes.length]), [['NARIN', true, 2], ['SOOIN', false, 1]]);
-  assert.equal(notes[0].groups[0].notes[0].author, 'A MEOVV fan');
-  assert.equal(notes[0].groups[0].emoji, '🩷');
-  assert.match(notes[0].groups[0].color, /^#[0-9A-F]{6}$/i);
-  const pages = renderNotes({ notes }, 3);
-  assert.equal(pages.length, 1);
-  assert.ok(pages[0].subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+test('inside pages pair up into spreads; the cover stays single', () => {
+  const { renderAll } = require('../src/services/pages');
+  const e = (id) => ({ id, title: id, winners: [{ text: 'GO HARD', votes: 3 }], totalVotes: 5 });
+  const book = { title: 'x', superlatives: [e('a')], favorites: [e('b')], moments: [e('c')], memories: [{ text: 'Seeing them live!' }] };
+  const spreads = renderAll(book);
+  assert.equal(spreads.length, 3, 'cover + 2 spreads');
+  const width = (buf) => buf.readUInt32BE(16);
+  assert.equal(width(spreads[0].buffer), 1080);
+  assert.equal(width(spreads[1].buffer), 2160);
+  assert.match(spreads[1].name, /-02-03-superlatives--fan-favorites\.png$/);
+  const single = renderAll(book, { spreads: false });
+  assert.equal(single.length, 5);
+  assert.ok(single.every((p) => width(p.buffer) === 1080));
 });
 
 test('every member has a heart and a colour', () => {

@@ -1,8 +1,8 @@
 /**
  * Renders the yearbook as PNG pages (1080×1350, black, matching the embeds).
- *   cover · member superlatives · in the fans' words (approved nomination notes) · 2026 fan favorites ·
- *   MEOVV moments · fan responses. Member names print in their member colour; emoji use Noto Color Emoji.
- * Fan favorites are album sleeves on one page; fan writing prints on tilted paper cards with tape and stickers.
+ *   cover · member superlatives · 2026 fan favorites (album sleeves) · MEOVV moments · fan moments (sticky notes).
+ * Inside pages pair up into double-width spreads by default. Member names print in their member colour;
+ * fan moments are handwritten (Caveat); emoji use Noto Color Emoji.
  */
 const path = require('node:path');
 const fs = require('node:fs');
@@ -14,6 +14,7 @@ const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Cinzel.ttf'), 'Cinzel');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'NotoColorEmoji.ttf'), 'Emoji');
+GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Caveat-SemiBold.woff2'), 'Caveat');
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 
@@ -58,7 +59,6 @@ const MUTED = 'rgba(255,255,255,0.55)';
 const RULE = 'rgba(255,255,255,0.18)';
 const PAPER = '#000000';
 // printed-paper tones for cards and sleeves (no neon)
-const CREAM = '#EEE8DC';
 const INK_DARK = '#1E1B18';
 const TAPE = 'rgba(214,200,168,0.78)';
 
@@ -167,7 +167,7 @@ function renderCover(book) {
   ctx.font = label(24);
   ctx.fillText(config.event.invite, MARGIN, H - MARGIN - 20);
   void book;
-  return canvas.toBuffer('image/png');
+  return canvas;
 }
 
 // ── shared randomness ─────────────────────────────────────────────
@@ -342,7 +342,7 @@ function renderGrid(kicker, title, entries, firstPageNo) {
       row.cells.forEach((c, j) => drawCell(ctx, { ...c, h: row.h - 8 }, MARGIN + j * (colW + gap), y, colW - 16));
       y += row.h;
     }
-    return canvas.toBuffer('image/png');
+    return canvas;
   });
 }
 
@@ -442,84 +442,128 @@ function renderAlbums(kicker, title, entries, pageNo) {
       ctx.fillText(votes, 0, 54);
     });
   });
-  return [canvas.toBuffer('image/png')];
+  return [canvas];
 }
 
-// ── paper cards (fan notes + fan memories) ──────────────────────
+// ── sticky notes (fan moments) ───────────────────────────────────
+// Each fan moment is a handwritten sticky note in a muted paper colour: soft shadow, a slightly darker
+// adhesive band, a curled corner, sometimes taped down or wearing a sticker. Notes pack into rows by
+// their tilted footprint, so they never touch.
 
-const CARD_PAD = 26;
-const SHORT = 90; // characters: short quotes can share a row
+const STICKY = ['#EDE1A6', '#E7CBCC', '#CADBE2', '#D9D0E5', '#DAE3C9', '#ECE4D3', '#E9D3B8'];
+const hand = (px) => `${px}px Caveat, Cinzel, Emoji`;
+const NOTE_PAD = 26;
+const NOTE_GAP = 34; // minimum space between notes, measured on their tilted outlines
 
-/** Type style by length: punchy one-liners in the display face, longer ones in the serif. */
-function quoteStyle(text) {
-  if (text.length <= 60) return { font: display, px: 42, lineH: 48 };
-  if (text.length <= 160) return { font: label, px: 28, lineH: 38 };
-  return { font: label, px: 24, lineH: 33 };
+/** Size and type for a note by length: short ones are small squares, long ones wide sheets. */
+function noteSize(text, key) {
+  const n = text.length;
+  if (n <= 60) return { w: rand(key, 'nw', 215, 255), px: 36 };
+  if (n <= 140) return { w: rand(key, 'nw', 265, 315), px: 31 };
+  if (n <= 280) return { w: rand(key, 'nw', 380, 450), px: 30 };
+  return { w: rand(key, 'nw', 500, 600), px: 28 };
 }
 
-/** Measure a card at width `w`. */
-function measureCard(ctx, { text, color }, w) {
-  const st = quoteStyle(text);
-  ctx.font = st.font(st.px);
-  const lines = wrap(ctx, `“${text}”`, w - CARD_PAD * 2);
-  const h = CARD_PAD + lines.length * st.lineH + 8 + CARD_PAD;
-  const angle = deg(rand(text, 'card-a', -4.5, 4.5));
-  return { text, color: color ?? '#FFFFFF', st, lines, w, h, angle };
+/** Measure a note: wrapped lines, height (at least nearly square), tilt and the tilted bounding box. */
+function measureNote(ctx, text, i) {
+  const key = `${i}|${text}`;
+  const { w, px } = noteSize(text, key);
+  ctx.font = hand(px);
+  const lineH = px * 1.12;
+  const lines = wrap(ctx, text, w - NOTE_PAD * 2);
+  const h = Math.max(w * 0.82, NOTE_PAD * 2 + 18 + lines.length * lineH);
+  const angle = deg(rand(key, 'na', -5, 5));
+  const bw = Math.abs(Math.cos(angle)) * w + Math.abs(Math.sin(angle)) * h;
+  const bh = Math.abs(Math.sin(angle)) * w + Math.abs(Math.cos(angle)) * h;
+  return { key, text, w, h, px, lineH, lines, angle, bw, bh, color: STICKY[hash(key) % STICKY.length], taped: rand(key, 'nt', 0, 1) < 0.3 };
 }
 
-/** Draw a measured card with its top-left at (x, y): paper tinted with the member colour, tape, maybe a sticker. */
-function drawCard(ctx, c, x, y) {
-  tilted(ctx, x, y, c.w, c.h, c.angle, () => {
+/** Draw a note whose tilted bounding box has its top-left at (x, y). */
+function drawNote(ctx, n, x, y) {
+  tilted(ctx, x + (n.bw - n.w) / 2, y + (n.bh - n.h) / 2, n.w, n.h, n.angle, () => {
+    const { w, h } = n;
+    const curl = Math.min(w, h) * 0.12;
+    // paper with a curled bottom-right corner
+    ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 16;
-    ctx.shadowOffsetY = 4;
-    ctx.fillStyle = mix(CREAM, c.color, 0.28);
-    ctx.fillRect(0, 0, c.w, c.h);
-    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 7;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(w, 0);
+    ctx.lineTo(w, h - curl);
+    ctx.quadraticCurveTo(w - curl * 0.2, h - curl * 0.2, w - curl, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, mix(n.color, '#FFFFFF', 0.18));
+    g.addColorStop(1, mix(n.color, '#000000', 0.06));
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+    // the curl itself
+    ctx.beginPath();
+    ctx.moveTo(w, h - curl);
+    ctx.quadraticCurveTo(w - curl * 0.75, h - curl * 0.75, w - curl, h);
+    ctx.quadraticCurveTo(w - curl * 0.55, h - curl * 0.55, w, h - curl);
+    ctx.fillStyle = mix(n.color, '#000000', 0.22);
+    ctx.fill();
+    // adhesive band, or tape on paper-style notes
+    if (n.taped) tapeCard(ctx, w, h, n.key);
+    else {
+      ctx.fillStyle = 'rgba(0,0,0,0.045)';
+      ctx.fillRect(0, 0, w, Math.min(46, h * 0.14));
+    }
+    // handwriting
     ctx.fillStyle = INK_DARK;
-    ctx.font = c.st.font(c.st.px);
-    c.lines.forEach((l, j) => ctx.fillText(l, CARD_PAD, CARD_PAD + (j + 1) * c.st.lineH - (c.st.lineH - c.st.px) / 2));
-    tapeCard(ctx, c.w, c.h, c.text);
-    maybeSticker(ctx, c.w, c.h, c.text);
+    ctx.font = hand(n.px);
+    const textH = n.lines.length * n.lineH;
+    const top = Math.max(NOTE_PAD + 8, (h - textH) / 2);
+    n.lines.forEach((l, j) => ctx.fillText(l, NOTE_PAD, top + (j + 0.8) * n.lineH));
+    maybeSticker(ctx, w, h, n.key, 0.22);
   });
 }
 
-/** Room a tilted card needs vertically beyond its own height. */
-const tiltRoom = (c) => Math.abs(Math.sin(c.angle)) * c.w * 0.6 + 14;
-
-/**
- * Turn a list of quotes into rows: two short quotes side by side, or one card at a random width and
- * position. Returns rows with a height and a draw(ctx, y) function.
- */
-function cardRows(ctx, quotes) {
+/** Pack notes into rows that fit the page width, keeping NOTE_GAP between tilted outlines. */
+function noteRows(ctx, texts) {
+  const notes = texts.map((t, i) => measureNote(ctx, t, i));
   const rows = [];
-  for (let i = 0; i < quotes.length; i++) {
-    const q = quotes[i];
-    const next = quotes[i + 1];
-    if (q.text.length <= SHORT && next && next.text.length <= SHORT) {
-      const gap = rand(q.text, 'pair-g', 20, 60);
-      const split = rand(q.text, 'pair-s', 0.42, 0.58);
-      const wa = (INNER - gap) * split;
-      const wb = INNER - gap - wa;
-      const a = measureCard(ctx, q, wa);
-      const b = measureCard(ctx, next, wb);
-      const dy = rand(q.text, 'pair-y', -10, 36);
-      const h = Math.max(a.h, b.h + dy) + Math.max(tiltRoom(a), tiltRoom(b));
-      rows.push({ h, draw: (c2, y) => { drawCard(c2, a, MARGIN, y + 14); drawCard(c2, b, MARGIN + wa + gap, y + 14 + dy); } });
-      i++;
-      continue;
-    }
-    const w = Math.round(INNER * rand(q.text, 'card-w', 0.62, 0.9));
-    const c = measureCard(ctx, q, w);
-    const x = MARGIN + rand(q.text, 'card-x', 0, INNER - w);
-    rows.push({ h: c.h + tiltRoom(c), draw: (c2, y) => drawCard(c2, c, x, y + 14) });
+  let row = [];
+  let used = 0;
+  for (const n of notes) {
+    if (row.length && used + NOTE_GAP + n.bw > INNER) { rows.push(row); row = []; used = 0; }
+    used += (row.length ? NOTE_GAP : 0) + n.bw;
+    row.push(n);
   }
-  return rows;
+  if (row.length) rows.push(row);
+
+  return rows.map((r) => {
+    const key = r.map((n) => n.key).join('|');
+    const tallest = Math.max(...r.map((n) => n.bh));
+    const width = r.reduce((s, n) => s + n.bw, 0) + NOTE_GAP * (r.length - 1);
+    // share the spare width out at random: some before, some between
+    const spare = INNER - width;
+    const cuts = r.map((_, i) => rand(key, `cut${i}`, 0, 1));
+    const sum = cuts.reduce((a, b) => a + b, 0) + rand(key, 'cutEnd', 0.2, 1);
+    const offsets = r.map((n) => rand(n.key, 'ny', 0, Math.max(0, tallest - n.bh) + 16));
+    const ext = Math.max(...r.map((n, i) => n.bh + offsets[i])); // what is actually drawn
+    return {
+      h: ext + NOTE_GAP,
+      ext,
+      draw: (c, y) => {
+        let x = MARGIN;
+        r.forEach((n, i) => {
+          x += (spare * cuts[i]) / sum;
+          drawNote(c, n, x, y + offsets[i]);
+          x += n.bw + NOTE_GAP;
+        });
+      },
+    };
+  });
 }
 
 /**
- * Lay rows out over as many pages as needed. A row with `keep` stays on the same page as the row after it
- * (headings never end a page). Returns one buffer per page.
+ * Lay rows out over as many pages as needed. Returns one canvas per page.
  */
 function flow(rows, header) {
   const out = [];
@@ -529,83 +573,79 @@ function flow(rows, header) {
     let y = header(ctx, out.length);
     let placed = 0;
     while (i < rows.length) {
-      let need = rows[i].h;
-      for (let k = i; rows[k]?.keep && rows[k + 1]; k++) need += rows[k + 1].h;
-      if (placed && y + need > BOTTOM) break;
+      if (placed && y + (rows[i].ext ?? rows[i].h) > BOTTOM - 28) break; // leave room for tape
       rows[i].draw(ctx, y);
       y += rows[i].h;
       i++;
       placed++;
     }
-    out.push(canvas.toBuffer('image/png'));
+    out.push(canvas);
   }
   return out;
 }
 
-/** Fan memories as paper cards, colours cycling through the members. */
+/** Fan moments ("What MEOVV moment made your 2026?") as sticky notes. */
 function renderMemories(book, firstPageNo) {
-  const colors = config.event.members.map((m) => m.color).filter(Boolean);
   const { ctx } = page();
-  const quotes = book.memories.map((m, i) => ({ text: m.text, color: colors[i % colors.length] }));
-  return flow(cardRows(ctx, quotes), (c, n) =>
+  return flow(noteRows(ctx, book.memories.map((m) => m.text)), (c, n) =>
     chrome(c, n ? '💌 Year in Review · continued' : '💌 Year in Review', config.event.memories.prompt, String(firstPageNo + n).padStart(2, '0')));
 }
 
-/**
- * "In the fans' words": approved nomination notes under each superlative, as cards in the member's colour.
- * Flows across as many pages as needed; returns one buffer per page.
- */
-function renderNotes(book, firstPageNo) {
-  const { ctx } = page();
-  const rows = [];
-  for (const cat of book.notes) {
-    const first = rows.length === 0;
-    rows.push({
-      h: first ? 54 : 70,
-      keep: true,
-      draw: (c, y) => {
-        c.fillStyle = MUTED;
-        c.font = label(24);
-        c.fillText(`🏆  ${cat.title.toUpperCase()}`, MARGIN, y + (first ? 34 : 50));
-      },
-    });
-    cat.groups.forEach((g) => {
-      const color = g.color ?? INK;
-      const name = `${g.member} ${g.emoji ?? ''}${g.winner ? '  🏁' : ''}`;
-      const key = `${cat.id}|${g.member}`;
-      rows.push({
-        h: 64,
-        keep: true,
-        draw: (c, y) => {
-          c.font = display(46);
-          const w = c.measureText(name).width;
-          const x = MARGIN + rand(key, 'name-x', 0, Math.max(0, INNER - w));
-          tilted(c, x, y + 4, w, 56, deg(rand(key, 'name-a', -4, 4)), () => {
-            c.fillStyle = color;
-            c.fillText(name, 0, 48);
-          });
-        },
-      });
-      rows.push(...cardRows(ctx, g.notes.map((n) => ({ text: n.text, color }))));
-    });
+// ── spreads ───────────────────────────────────────────────────────
+
+/** Two pages side by side (2160×1350) with a soft fold down the middle; `right` may be null (blank page). */
+function spread(left, right) {
+  const canvas = createCanvas(W * 2, H);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, W * 2, H);
+  ctx.drawImage(left, 0, 0);
+  if (right) ctx.drawImage(right, W, 0);
+  else if (LOGO) {
+    // closing blank page: a small logo, centred
+    const w = 360;
+    const h = (LOGO.height / LOGO.width) * w;
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(LOGO, W + (W - w) / 2, (H - h) / 2, w, h);
+    ctx.globalAlpha = 1;
   }
-  return flow(rows, (c, n) => chrome(c, n ? '💬 Fan notes · continued' : '💬 Fan notes', 'IN THE FANS’ WORDS', String(firstPageNo + n).padStart(2, '0')));
+  const g = ctx.createLinearGradient(W - 60, 0, W + 60, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.07)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(W - 60, 0, 120, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fillRect(W - 1, 0, 2, H);
+  return canvas;
 }
 
 /**
- * Every page of the yearbook as PNG buffers, in reading order.
+ * Every page of the yearbook as PNGs, in reading order. With `spreads` (the default, `yearbook.spreads` in the
+ * config) the cover stays a single page and the inside pages pair up into double-width spreads.
  * @returns {Array<{name:string, buffer:Buffer}>}
  */
-function renderAll(book) {
-  const pages = [{ name: 'meovv-2026-yearbook-01-cover.png', buffer: renderCover(book) }];
+function renderAll(book, { spreads = config.event.yearbook?.spreads ?? true } = {}) {
+  const inside = [];
   let n = 2;
-  const add = (slug, buffers) => buffers.forEach((buffer, i) => pages.push({ name: `meovv-2026-yearbook-${String(n++).padStart(2, '0')}-${slug}${buffers.length > 1 ? `-${i + 1}` : ''}.png`, buffer }));
+  const add = (slug, canvases) => canvases.forEach((canvas, i) => inside.push({ no: n++, slug: `${slug}${canvases.length > 1 ? `-${i + 1}` : ''}`, canvas }));
   if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n));
-  if (book.notes?.length) add('fan-notes', renderNotes(book, n));
   if (book.favorites.length) add('fan-favorites', renderAlbums('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
   if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n));
   if (book.memories.length) add('memories', renderMemories(book, n));
+
+  const num = (x) => String(x).padStart(2, '0');
+  const pages = [{ name: 'meovv-2026-yearbook-01-cover.png', buffer: renderCover(book).toBuffer('image/png') }];
+  if (!spreads) {
+    for (const p of inside) pages.push({ name: `meovv-2026-yearbook-${num(p.no)}-${p.slug}.png`, buffer: p.canvas.toBuffer('image/png') });
+    return pages;
+  }
+  for (let i = 0; i < inside.length; i += 2) {
+    const [l, r] = [inside[i], inside[i + 1]];
+    const name = r ? `meovv-2026-yearbook-${num(l.no)}-${num(r.no)}-${l.slug}--${r.slug}.png` : `meovv-2026-yearbook-${num(l.no)}-${l.slug}.png`;
+    pages.push({ name, buffer: spread(l.canvas, r?.canvas ?? null).toBuffer('image/png') });
+  }
   return pages;
 }
 
-module.exports = { assetsReady, logoReady, renderAll, renderCover, renderGrid, renderAlbums, renderNotes, renderMemories, W, H };
+module.exports = { assetsReady, logoReady, renderAll, renderCover, renderGrid, renderAlbums, renderMemories, W, H };

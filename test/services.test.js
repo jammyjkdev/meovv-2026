@@ -107,7 +107,7 @@ test('memories + yearbook compile', async () => {
   const { id } = await db.upsertMemory({ userId: 'u1', userName: 'Fan 1', text: 'Seeing them live <3' });
   const second = await db.upsertMemory({ userId: 'u2', userName: 'Fan 2', text: 'The GO HARD stage' });
   assert.equal(second.id, id + 1, 'response numbers are sequential');
-  await db.updateMemory(id, { featured: true, anonymous: true });
+  await db.updateMemory(id, { featured: true });
   assert.deepEqual(await db.countMemories(), { total: 2, featured: 1 });
   const edited = await db.upsertMemory({ userId: 'u2', userName: 'Fan 2', text: 'Edited' });
   assert.deepEqual(edited, { id: second.id, status: 'updated' });
@@ -117,10 +117,11 @@ test('memories + yearbook compile', async () => {
   const bd = book.superlatives.find((e) => e.id === 'best-dressed');
   assert.equal(bd.winners[0].text, 'ANNA');
   assert.equal(book.memories.length, 1);
-  assert.equal(book.memories[0].author, 'A MEOVV fan');
+  assert.equal(book.memories[0].text, 'Seeing them live <3');
+  assert.equal(book.memories[0].author, undefined, 'fans are not named in the book');
   assert.ok(yearbook.problems(book).some((p) => p.includes('never posted')));
   const pages = yearbook.pageFiles(book);
-  assert.ok(pages.length >= 5, 'cover + three sections + memories');
+  assert.ok(pages.length >= 3, 'cover + spreads of the four sections');
   const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
   for (const p of pages) {
     assert.ok(p.name.endsWith('.png'), p.name);
@@ -128,60 +129,38 @@ test('memories + yearbook compile', async () => {
   }
 });
 
-test('review queue: approve, reject and skip fan moments and nomination notes', async () => {
+test('review queue: approve, reject, skip and edit fan moments', async () => {
   const review = require('../src/services/review');
-  // u1/u2 moments exist from the test above (u1's approved as featured, u2's edited and pending)
-  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(20), reason: 'Red hair era!' });
-  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'sooin', user: u(21), reason: 'Airport fits' });
-  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'gawon', user: u(22) }); // no note → not in the queue
+  // u1's moment is approved (featured) and u2's edited one is pending, from the test above
+  await db.upsertMemory({ userId: 'u30', userName: 'Fan 30', text: 'Gawon in the F1 fit.' });
   const before = await review.counts(db);
-  assert.equal(before.memory.pending, 1);
-  assert.equal(before.reason.pending, 2);
+  assert.deepEqual([before.pending, before.approved], [2, 1]);
 
-  const pending = { type: 'all', status: 'pending', offset: 0 };
+  const pending = { status: 'pending', offset: 0 };
   let msg = await review.render(db, pending);
-  assert.match(msg.embeds[0].data.title, /Fan moment/, 'moments come first');
-  const approveMoment = msg.components[0].components[0].data.custom_id;
-  const res = await review.handle(db, approveMoment);
-  assert.match(res.audit, /approved fan moment/);
-  assert.match(res.message.embeds[0].data.title, /Best Dressed|🏆/, 'next card is the first note');
+  assert.match(msg.embeds[0].data.title, /Fan moment/);
+  const ids = (m) => m.components[0].components.map((b) => b.data.custom_id);
 
-  // skip the first note, reject the second, then approve the first
-  const skip = res.message.components[0].components[2].data.custom_id;
-  msg = (await review.handle(db, skip)).message;
-  assert.match(msg.embeds[0].data.description, /SOOIN/);
-  msg = (await review.handle(db, msg.components[0].components[1].data.custom_id)).message; // reject sooin
-  assert.match(msg.embeds[0].data.description, /NARIN/, 'wraps back to the skipped one');
-  msg = (await review.handle(db, msg.components[0].components[0].data.custom_id)).message; // approve narin
+  // skip the first, reject the second, then approve the first (wrapped back round)
+  msg = (await review.handle(db, ids(msg)[2])).message;
+  const res = await review.handle(db, ids(msg)[1]);
+  assert.match(res.audit, /rejected fan moment/);
+  msg = (await review.handle(db, ids(res.message)[0])).message;
   assert.equal(msg.components.length, 0, 'all caught up');
+  assert.deepEqual(await review.counts(db), { pending: 0, approved: 2, rejected: 1 });
 
-  const after = await review.counts(db);
-  assert.deepEqual([after.memory.pending, after.reason.pending, after.reason.approved, after.reason.rejected], [0, 0, 1, 1]);
+  // staff cut a moment down for the book; the original stays
+  const u1 = await db.memoryByUser('u1');
+  const saved = await review.saveEdit(db, review.buttonId('save', { id: String(u1.id) }, pending), 'Seeing them live');
+  assert.match(saved.audit, /edited the book version/);
+  assert.equal((await db.getMemory(u1.id)).text, 'Seeing them live <3');
+  assert.ok((await yearbook.compile(db)).memories.some((m) => m.text === 'Seeing them live'));
+  await review.saveEdit(db, review.buttonId('save', { id: String(u1.id) }, pending), 'Seeing them live <3');
+  assert.equal((await db.getMemory(u1.id)).book_text, null, 'typing the original back clears the edit');
 
-  await db.savePoll({ pollKey: 'best-dressed', kind: 'superlative', question: 'Best Dressed', options: [], channelId: 'c', messageId: 'm', postedAt: 1, endsAt: 2 });
-  await db.saveResults('best-dressed', [{ text: 'NARIN', votes: 9 }, { text: 'SOOIN', votes: 2 }]);
-  const book = await yearbook.compile(db);
-  assert.deepEqual(book.notes.map((c) => c.id), ['best-dressed']);
-  assert.deepEqual(book.notes[0].groups.map((g) => [g.member, g.winner, g.notes[0].text]), [['NARIN', true, 'Red hair era!']]);
-  assert.ok(yearbook.pageFiles(book).some((p) => p.name.includes('fan-notes')));
-
-  // staff cut a note down for the book; the original stays, and the book prints the cut
-  const narin = (await db.nominationsByUser('u20'))[0];
-  await db.setBookText('reason', String(narin._id), 'Red hair!');
-  assert.equal((await db.getReason(String(narin._id))).reason, 'Red hair era!');
-  assert.equal((await yearbook.compile(db)).notes[0].groups[0].notes[0].text, 'Red hair!');
-  const savedBack = await review.saveEdit(db, review.buttonId('save', { kind: 'reason', id: String(narin._id) }, pending), 'Red hair era!');
-  assert.match(savedBack.audit, /original/);
-  assert.equal((await yearbook.compile(db)).notes[0].groups[0].notes[0].text, 'Red hair era!', 'typing the original back clears the edit');
-  await db.setBookText('reason', String(narin._id), 'Red hair!');
-
-  // a fan editing their note sends it back to the queue (and drops the staff cut)
-  await nominateMember(db, { categoryId: 'best-dressed', memberId: 'narin', user: u(20), reason: 'Changed my mind, still Narin' });
-  assert.equal((await review.counts(db)).reason.pending, 1);
-  assert.equal((await db.nominationsByUser('u20'))[0].reason_book, null);
-  await db.deleteNominationsByUser('u20');
-  await db.deleteNominationsByUser('u21');
-  await db.deleteNominationsByUser('u22');
+  // a fan editing their moment sends it back to the queue
+  await db.upsertMemory({ userId: 'u30', userName: 'Fan 30', text: 'Gawon in the F1 fit!!' });
+  assert.equal((await review.counts(db)).pending, 1);
 });
 
 test('the event waits for the staff command, then runs from that point', async () => {

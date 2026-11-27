@@ -1,4 +1,4 @@
-const { MongoClient, ObjectId } = require('mongodb');
+const { MongoClient } = require('mongodb');
 const log = require('./lib/log')('db');
 
 // Used when MONGO_URI doesn't name a database (Mongo would otherwise fall back to "test").
@@ -52,18 +52,11 @@ async function open(uri, { dbName = resolveDbName(uri) } = {}) {
   return createRepo(client, col);
 }
 
-const HAS_REASON = { reason: { $nin: [null, ''] } };
-
-/** Mongo filter for review entries of `kind` ('memory' | 'reason') in `status` ('pending' | 'approved' | 'rejected'). */
-function reviewFilter(kind, status) {
-  if (kind === 'memory') {
-    if (status === 'approved') return { removed: false, featured: true };
-    if (status === 'rejected') return { removed: false, featured: false, reviewed: true };
-    return { removed: false, featured: false, reviewed: { $ne: true } };
-  }
-  if (status === 'approved') return { ...HAS_REASON, reason_status: 'approved' };
-  if (status === 'rejected') return { ...HAS_REASON, reason_status: 'rejected' };
-  return { ...HAS_REASON, reason_status: null }; // null also matches nominations from before reviews existed
+/** Mongo filter for fan moments in review `status` ('pending' | 'approved' | 'rejected'). Approved = featured. */
+function reviewFilter(status) {
+  if (status === 'approved') return { removed: false, featured: true };
+  if (status === 'rejected') return { removed: false, featured: false, reviewed: true };
+  return { removed: false, featured: false, reviewed: { $ne: true } };
 }
 
 function createRepo(client, col) {
@@ -89,8 +82,7 @@ function createRepo(client, col) {
       const res = await retryOnDuplicate(() =>
         col.nominations.updateOne(
           { category_id: categoryId, user_id: userId },
-          // A new or edited "why" goes back into the review queue.
-          { $set: { user_name: userName, value, norm, link, reason, reason_status: null, reason_anonymous: false, reason_book: null, updated_at: t }, $setOnInsert: { created_at: t } },
+          { $set: { user_name: userName, value, norm, link, reason, updated_at: t }, $setOnInsert: { created_at: t } },
           { upsert: true },
         ),
       );
@@ -223,42 +215,22 @@ function createRepo(client, col) {
       return (await col.memories.updateOne({ id }, { $set: patch })).matchedCount;
     },
 
-    // ── review queue ──────────────────────────────────────────────
-    // Two kinds of fan writing can go in the yearbook, and staff approve or reject each one:
-    //   memory: a /moment response   (approved = featured; rejected = reviewed but not featured)
-    //   reason: the "why" on a /nominate member  (reason_status 'approved' | 'rejected' | null)
-    /** The `offset`-th entry of `kind` with review `status`, plus how many there are. */
-    async reviewItem(kind, status, offset = 0) {
-      const c = kind === 'memory' ? col.memories : col.nominations;
-      const filter = reviewFilter(kind, status);
-      const [item] = await c.find(filter).sort({ created_at: 1, _id: 1 }).skip(offset).limit(1).toArray();
-      return item ?? null;
+    // ── review queue (fan moments) ────────────────────────────────
+    /** The `offset`-th fan moment with review `status`, oldest first. */
+    async reviewItem(status, offset = 0) {
+      const [doc] = await col.memories.find(reviewFilter(status)).sort({ created_at: 1, id: 1 }).skip(offset).limit(1).toArray();
+      return doc ?? null;
     },
-    countReview(kind, status) {
-      return (kind === 'memory' ? col.memories : col.nominations).countDocuments(reviewFilter(kind, status));
+    countReview(status) {
+      return col.memories.countDocuments(reviewFilter(status));
     },
-    getReason(id) {
-      return ObjectId.isValid(id) ? col.nominations.findOne({ _id: new ObjectId(id) }) : null;
-    },
-    /** Approve or reject one entry. Returns how many matched (0 if it was deleted meanwhile). */
-    async setReview(kind, id, { approved, anonymous = false }) {
-      if (kind === 'memory') {
-        return (await col.memories.updateOne({ id: Number(id), removed: false }, { $set: { featured: approved, reviewed: true, anonymous } })).matchedCount;
-      }
-      if (!ObjectId.isValid(id)) return 0;
-      return (
-        await col.nominations.updateOne({ _id: new ObjectId(id) }, { $set: { reason_status: approved ? 'approved' : 'rejected', reason_anonymous: anonymous } })
-      ).matchedCount;
+    /** Approve or reject a moment. Returns how many matched (0 if it was removed meanwhile). */
+    async setReview(id, approved) {
+      return (await col.memories.updateOne({ id: Number(id), removed: false }, { $set: { featured: approved, reviewed: true } })).matchedCount;
     },
     /** Staff's cut-down version for the yearbook (null or '' = print the fan's original). The original is never changed. */
-    async setBookText(kind, id, text) {
-      const value = text?.trim() || null;
-      if (kind === 'memory') return (await col.memories.updateOne({ id: Number(id) }, { $set: { book_text: value } })).matchedCount;
-      if (!ObjectId.isValid(id)) return 0;
-      return (await col.nominations.updateOne({ _id: new ObjectId(id) }, { $set: { reason_book: value } })).matchedCount;
-    },
-    approvedReasons() {
-      return col.nominations.find(reviewFilter('reason', 'approved')).sort({ created_at: 1, _id: 1 }).toArray();
+    async setBookText(id, text) {
+      return (await col.memories.updateOne({ id: Number(id) }, { $set: { book_text: text?.trim() || null } })).matchedCount;
     },
 
     // ── scheduled jobs ────────────────────────────────────────────
