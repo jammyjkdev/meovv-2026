@@ -99,6 +99,7 @@ Set `YEARBOOK_NOW=2026-11-09T11:58` in `.env` to make the bot think it's that ti
 - **Finalists:** `polls.finalistsPerPoll` (default 5, Discord's maximum is 10) sets how many top nominations make each Week 2 poll. `polls.superlativeFinalists` (default 3) shortlists the most-nominated members for each superlative poll; ties go to whoever was nominated first. Poll answers are limited to 55 characters, and `/yb nominations rename` sets a clean display name.
 - **Yearbook sections:** a category's `section` (`favorites` or `moments`) decides where its winner appears.
 - **Members:** each member's `emoji` (a heart) is used in polls and review cards, and their `color` prints their name in the yearbook pages. Approved nomination notes appear in *In the Fans' Words*, grouped by superlative with the winner first (🏁).
+- **Cover logo:** put the MEOVV logo at `assets/logo.png` or `assets/logo.svg` (white on transparent works best on the black cover) and restart the bot. It replaces the MEOVV wordmark. Without it, the cover prints MEOVV as text.
 - **Fonts:** Anton, Cinzel and Noto Color Emoji (all SIL Open Font License) live in `assets/fonts`; emoji fall back to Noto Color Emoji on every page.
 
 ## Development

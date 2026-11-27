@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../src/config');
-const { renderAll } = require('../src/services/pages');
+const { renderAll, logoReady } = require('../src/services/pages');
 
 const members = config.event.members;
 const entry = (c, i, extra = {}) => ({ id: c.id, title: c.title, type: c.type, status: 'decided', totalVotes: 120 + i * 7, winners: [{ text: members[i % members.length].name, votes: 60 + i * 3 }], ...extra });
@@ -55,11 +55,13 @@ const book = {
   ],
 };
 
-const dir = path.join(config.env.dataDir, 'previews');
-fs.mkdirSync(dir, { recursive: true });
-for (const f of fs.readdirSync(dir)) if (f.endsWith('.png')) fs.unlinkSync(path.join(dir, f));
-for (const p of renderAll(book)) {
-  fs.writeFileSync(path.join(dir, p.name), p.buffer);
-  console.log(`${p.name}  ${(p.buffer.length / 1024).toFixed(0)} KB`);
-}
-console.log(`\nWritten to ${dir}`);
+logoReady.then(() => {
+  const dir = path.join(config.env.dataDir, 'previews');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of fs.readdirSync(dir)) if (f.endsWith('.png')) fs.unlinkSync(path.join(dir, f));
+  for (const p of renderAll(book)) {
+    fs.writeFileSync(path.join(dir, p.name), p.buffer);
+    console.log(`${p.name}  ${(p.buffer.length / 1024).toFixed(0)} KB`);
+  }
+  console.log(`\nWritten to ${dir}`);
+});

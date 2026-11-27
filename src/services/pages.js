@@ -4,13 +4,29 @@
  *   MEOVV moments · fan responses. Member names print in their member colour; emoji use Noto Color Emoji.
  */
 const path = require('node:path');
-const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const fs = require('node:fs');
+const { createCanvas, GlobalFonts, Image } = require('@napi-rs/canvas');
 const config = require('../config');
 
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Cinzel.ttf'), 'Cinzel');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'NotoColorEmoji.ttf'), 'Emoji');
+
+/**
+ * The MEOVV logo for the cover: assets/logo.png or assets/logo.svg (white or light on transparent works best).
+ * Without one, the cover prints MEOVV in type. Images decode in the background, so the logo is loaded
+ * when this module is first required and `logoReady` resolves once it can be drawn.
+ */
+let LOGO = null;
+const logoReady = new Promise((resolve) => {
+  const file = ['logo.svg', 'logo.png'].map((n) => path.join(__dirname, '..', '..', 'assets', n)).find((f) => fs.existsSync(f));
+  if (!file) return resolve(false);
+  const img = new Image();
+  img.onload = () => { LOGO = img; resolve(true); };
+  img.onerror = () => resolve(false);
+  img.src = fs.readFileSync(file);
+});
 
 const W = 1080;
 const H = 1350;
@@ -104,8 +120,16 @@ const BOTTOM = H - MARGIN - 24;
 function renderCover(book) {
   const { canvas, ctx } = page();
   ctx.fillStyle = INK;
-  ctx.font = display(260);
-  ctx.fillText('MEOVV', MARGIN - 8, 540);
+  if (LOGO) {
+    // fit the logo into the space the MEOVV wordmark used, sitting on the same baseline
+    const scale = Math.min(INNER / LOGO.width, 280 / LOGO.height);
+    const w = LOGO.width * scale;
+    const h = LOGO.height * scale;
+    ctx.drawImage(LOGO, MARGIN, 510 - h, w, h);
+  } else {
+    ctx.font = display(260);
+    ctx.fillText('MEOVV', MARGIN - 8, 540);
+  }
   ctx.font = display(150);
   ctx.fillText('2026', MARGIN, 700);
   ctx.fillText('YEARBOOK', MARGIN, 860);
@@ -325,4 +349,4 @@ function renderAll(book) {
   return pages;
 }
 
-module.exports = { renderAll, renderCover, renderGrid, renderNotes, renderMemories, W, H };
+module.exports = { logoReady, renderAll, renderCover, renderGrid, renderNotes, renderMemories, W, H };
