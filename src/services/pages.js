@@ -135,12 +135,9 @@ function renderCover(book) {
   ctx.fillText('YEARBOOK', MARGIN, 860);
   ctx.fillStyle = RULE;
   ctx.fillRect(MARGIN, 930, INNER, 2);
-  // member hearts in their colours, then the racing flag (full opacity, or the emoji fade)
   ctx.fillStyle = INK;
-  ctx.font = label(40);
-  ctx.fillText(`${config.event.members.map((m) => m.emoji).filter(Boolean).join(' ')}  🏎️ 🏁`, MARGIN, 1010);
   ctx.font = label(26);
-  ctx.fillText(`🏁 ${config.event.credit}`, MARGIN, H - MARGIN - 62);
+  ctx.fillText(config.event.credit, MARGIN, H - MARGIN - 62);
   ctx.fillStyle = MUTED;
   ctx.font = label(24);
   ctx.fillText(config.event.invite, MARGIN, H - MARGIN - 20);
