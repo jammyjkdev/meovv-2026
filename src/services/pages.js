@@ -363,55 +363,90 @@ function coverFor(e) {
 }
 
 /** One record sleeve: cover art (or a printed colour block with the title), with the vinyl peeking out. */
+/** A record at (cx, cy) with radius R: a picture disc printed with `art`, or plain vinyl. */
+function drawRecord(ctx, cx, cy, R, art, key, labelColor) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 4;
+  ctx.fillStyle = '#242424';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.clip();
+  if (art) {
+    // picture disc: the album art printed across the whole record, turned a little
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(deg(rand(key, 'sl-r', -25, 25)));
+    ctx.drawImage(art, -R, -R, R * 2, R * 2);
+    ctx.restore();
+  }
+  // grooves and a soft sheen
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = art ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.1)';
+  for (let r = R * 0.42; r < R - 2; r += 6) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+  const sheen = ctx.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+  sheen.addColorStop(0.35, 'rgba(255,255,255,0)');
+  sheen.addColorStop(0.5, 'rgba(255,255,255,0.14)');
+  sheen.addColorStop(0.65, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.stroke();
+  // centre label (small on a picture disc so the art stays the star) and spindle hole
+  ctx.fillStyle = art ? 'rgba(20,20,20,0.85)' : labelColor;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * (art ? 0.12 : 0.28), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = PAPER;
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(2, R * 0.03), 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
+ * One record sleeve with its record. The sleeve always carries the printed title; with cover art the
+ * record is a picture disc lying in front of the sleeve, otherwise plain vinyl peeking out behind it.
+ */
 function drawSleeve(ctx, e, x, y, s, i) {
   const key = e.id ?? e.title;
   const art = coverFor(e);
   const angle = deg(rand(key, 'sl-a', -5, 5));
-  const peek = s * rand(key, 'sl-p', 0.18, 0.3);
   tilted(ctx, x, y, s, s, angle, () => {
-    // vinyl, half out of the sleeve
-    ctx.fillStyle = '#242424';
-    ctx.beginPath();
-    ctx.arc(s / 2 + peek, s / 2, s * 0.47, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    for (let r = s * 0.2; r < s * 0.46; r += 6) { ctx.beginPath(); ctx.arc(s / 2 + peek, s / 2, r, 0, Math.PI * 2); ctx.stroke(); }
-    ctx.fillStyle = SLEEVES[(i + 3) % SLEEVES.length];
-    ctx.beginPath();
-    ctx.arc(s / 2 + peek, s / 2, s * 0.13, 0, Math.PI * 2);
-    ctx.fill();
+    if (!art) drawRecord(ctx, s / 2 + s * rand(key, 'sl-p', 0.18, 0.3), s / 2, s * 0.47, null, key, SLEEVES[(i + 3) % SLEEVES.length]);
     // sleeve
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = 18;
     ctx.fillStyle = SLEEVES[i % SLEEVES.length];
     ctx.fillRect(0, 0, s, s);
     ctx.shadowBlur = 0;
-    if (art) {
-      ctx.drawImage(art, 0, 0, s, s);
-    } else {
-      const title = e.winners.length ? e.winners.map((w) => w.text).join(' & ') : 'TBA';
-      // biggest type at which the title fits inside the sleeve (above the small MEOVV mark)
-      let px = 58;
-      let lines;
-      for (; px > 14; px -= 2) {
-        ctx.font = display(px);
-        lines = wrap(ctx, title, s - 28);
-        const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-        if (widest <= s - 28 && 14 + lines.length * px * 1.02 <= s - 40) break;
-      }
-      ctx.fillStyle = INK_DARK;
+    const title = e.winners.length ? e.winners.map((w) => w.text).join(' & ') : 'TBA';
+    // with a disc in front, the title keeps to the band above it
+    const boxW = s - 28;
+    const boxH = art ? s * 0.3 : s - 40;
+    let px = 58;
+    let lines;
+    for (; px > 14; px -= 2) {
       ctx.font = display(px);
-      lines.forEach((l, j) => ctx.fillText(l, 14, 14 + px * 0.9 + j * px * 1.02));
-      ctx.font = label(13);
-      ctx.fillStyle = tint('#000000', 0.55);
-      ctx.fillText('MEOVV', 14, s - 14);
+      lines = wrap(ctx, title, boxW);
+      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      if (widest <= boxW && 14 + lines.length * px * 1.02 <= boxH) break;
     }
+    ctx.fillStyle = INK_DARK;
+    ctx.font = display(px);
+    lines.forEach((l, j) => ctx.fillText(l, 14, 14 + px * 0.9 + j * px * 1.02));
+    ctx.font = label(13);
+    ctx.fillStyle = tint('#000000', 0.55);
+    ctx.fillText('MEOVV', 14, s - 14);
     tapeCard(ctx, s, s, `sleeve|${key}`);
-    maybeSticker(ctx, s, s, `sleeve|${key}`, 0.3);
+    if (art) drawRecord(ctx, s * rand(key, 'sl-p', 0.66, 0.78), s * rand(key, 'sl-q', 0.68, 0.72), s * 0.37, art, key);
+    else maybeSticker(ctx, s, s, `sleeve|${key}`, 0.3);
   });
 }
 
