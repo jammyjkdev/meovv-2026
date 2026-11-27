@@ -146,13 +146,13 @@ test('review queue: approve, reject and skip fan moments and nomination notes', 
   assert.match(res.audit, /approved fan moment/);
   assert.match(res.message.embeds[0].data.title, /Best Dressed|🏆/, 'next card is the first note');
 
-  // skip the first note, reject the second, then approve the first anonymously
-  const skip = res.message.components[0].components[3].data.custom_id;
+  // skip the first note, reject the second, then approve the first
+  const skip = res.message.components[0].components[2].data.custom_id;
   msg = (await review.handle(db, skip)).message;
   assert.match(msg.embeds[0].data.description, /SOOIN/);
-  msg = (await review.handle(db, msg.components[0].components[2].data.custom_id)).message; // reject sooin
+  msg = (await review.handle(db, msg.components[0].components[1].data.custom_id)).message; // reject sooin
   assert.match(msg.embeds[0].data.description, /NARIN/, 'wraps back to the skipped one');
-  msg = (await review.handle(db, msg.components[0].components[1].data.custom_id)).message; // approve narin anonymously
+  msg = (await review.handle(db, msg.components[0].components[0].data.custom_id)).message; // approve narin
   assert.equal(msg.components.length, 0, 'all caught up');
 
   const after = await review.counts(db);
@@ -162,7 +162,7 @@ test('review queue: approve, reject and skip fan moments and nomination notes', 
   await db.saveResults('best-dressed', [{ text: 'NARIN', votes: 9 }, { text: 'SOOIN', votes: 2 }]);
   const book = await yearbook.compile(db);
   assert.deepEqual(book.notes.map((c) => c.id), ['best-dressed']);
-  assert.deepEqual(book.notes[0].groups.map((g) => [g.member, g.winner, g.notes[0].author]), [['NARIN', true, 'A MEOVV fan']]);
+  assert.deepEqual(book.notes[0].groups.map((g) => [g.member, g.winner, g.notes[0].text]), [['NARIN', true, 'Red hair era!']]);
   assert.ok(yearbook.pageFiles(book).some((p) => p.name.includes('fan-notes')));
 
   // staff cut a note down for the book; the original stays, and the book prints the cut

@@ -258,7 +258,7 @@ function measureCard(ctx, { text, author, color }, w) {
   const st = quoteStyle(text);
   ctx.font = st.font(st.px);
   const lines = wrap(ctx, `“${text}”`, w - CARD_PAD * 2);
-  const h = CARD_PAD + lines.length * st.lineH + 18 + 20 + CARD_PAD;
+  const h = CARD_PAD + lines.length * st.lineH + 8 + CARD_PAD;
   const seed = hash(`${author}|${text}`);
   const angle = (((seed % 9) - 4) * 0.35 + (seed % 2 ? 0.2 : -0.2)) * (Math.PI / 180); // about ±1.6°
   return { text, author, color: color ?? '#FFFFFF', st, lines, w, h, seed, angle };
@@ -285,13 +285,10 @@ function drawCard(ctx, c, x, y) {
   ctx.fillStyle = 'rgba(255,255,255,0.22)';
   ctx.fillRect(-48, -12, 96, 24);
   ctx.restore();
-  // quote + credit
+  // the quote (fans aren't credited in the book)
   ctx.fillStyle = INK;
   ctx.font = c.st.font(c.st.px);
   c.lines.forEach((l, j) => ctx.fillText(l, CARD_PAD, CARD_PAD + (j + 1) * c.st.lineH - (c.st.lineH - c.st.px) / 2));
-  ctx.fillStyle = tint(c.color, 0.85);
-  ctx.font = label(18);
-  ctx.fillText(`—  ${c.author.toUpperCase()}`, CARD_PAD, c.h - CARD_PAD + 4);
   ctx.restore();
 }
 

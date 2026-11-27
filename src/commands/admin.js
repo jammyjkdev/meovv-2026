@@ -133,8 +133,7 @@ const data = () =>
         )
         .addSubcommand((s) =>
           s.setName('feature').setDescription('Feature a response in the yearbook')
-            .addIntegerOption((o) => o.setName('id').setDescription('Response #').setRequired(true))
-            .addBooleanOption((o) => o.setName('anonymous').setDescription('Credit as "A MEOVV fan" instead of their name')),
+            .addIntegerOption((o) => o.setName('id').setDescription('Response #').setRequired(true)),
         )
         .addSubcommand((s) => s.setName('unfeature').setDescription('Un-feature a response').addIntegerOption((o) => o.setName('id').setDescription('Response #').setRequired(true)))
         .addSubcommand((s) => s.setName('remove').setDescription('Hide a response (spam/inappropriate)').addIntegerOption((o) => o.setName('id').setDescription('Response #').setRequired(true))),
@@ -393,7 +392,7 @@ async function memoriesGroup(sub, interaction, ctx) {
       .setTitle(`💌 Responses — page ${page}`)
       .setFooter({ text: `${total ?? 0} total · ${featured ?? 0} approved · step through them with /yb review` });
     for (const m of rows) {
-      embed.addFields({ name: `#${m.id} ${m.featured ? '⭐ ' : ''}${truncate(m.user_name, 80)}${m.anonymous ? ' (anon)' : ''}`, value: truncate(m.text, 1000) });
+      embed.addFields({ name: `#${m.id} ${m.featured ? '⭐ ' : ''}${truncate(m.user_name, 80)}`, value: truncate(m.text, 1000) });
     }
     if (!rows.length) embed.setDescription('*Nothing here.*');
     return interaction.reply({ embeds: [embed], flags: ephemeral });
@@ -403,10 +402,9 @@ async function memoriesGroup(sub, interaction, ctx) {
   if (!memory || memory.removed) return interaction.reply({ content: `No response #${id}.`, flags: ephemeral });
   const who = `response #${id} by <@${memory.user_id}>`;
   if (sub === 'feature') {
-    const anonymous = interaction.options.getBoolean('anonymous') ?? false;
-    await ctx.db.updateMemory(id, { featured: true, reviewed: true, anonymous });
+    await ctx.db.updateMemory(id, { featured: true, reviewed: true });
     await interaction.reply({ content: `⭐ Featured #${id}.`, flags: ephemeral });
-    return audit(interaction, `featured ${who}${anonymous ? ' (anonymous)' : ''}`);
+    return audit(interaction, `featured ${who}`);
   }
   if (sub === 'unfeature') {
     await ctx.db.updateMemory(id, { featured: false, reviewed: true });

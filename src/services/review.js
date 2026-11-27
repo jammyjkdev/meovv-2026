@@ -2,7 +2,7 @@
  * Staff review queue for fan writing that can go in the yearbook:
  *   💌 moments: /moment responses ("What MEOVV moment made your 2026?")
  *   🏆 notes:   the "why" fans wrote with /nominate member
- * `/yb review` shows one entry at a time with Approve / Approve anonymously / Reject / Skip buttons.
+ * `/yb review` shows one entry at a time with Approve / Reject / Skip / Edit buttons. Fans aren't named in the book.
  * ✏️ Edit saves a cut-down "book version" that the yearbook prints instead; the fan's original is kept.
  * Only approved entries are printed in the yearbook.
  */
@@ -77,7 +77,7 @@ function toItem(kind, doc) {
   };
 }
 
-const statusLabel = (item) => (!item.reviewed ? '🕒 Pending' : item.approved ? `✅ Approved${item.anonymous ? ' (anonymous)' : ''}` : '❌ Rejected');
+const statusLabel = (item) => (!item.reviewed ? '🕒 Pending' : item.approved ? '✅ Approved' : '❌ Rejected');
 
 /** Counts for every kind and status, for the footer and `/yb status`. */
 async function counts(db) {
@@ -132,7 +132,6 @@ async function render(db, view, notice = '') {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(buttonId('approve', item, view)).setStyle(ButtonStyle.Success).setLabel('Approve').setEmoji('✅'),
-    new ButtonBuilder().setCustomId(buttonId('anon', item, view)).setStyle(ButtonStyle.Primary).setLabel('Approve anonymously').setEmoji('🕶️'),
     new ButtonBuilder().setCustomId(buttonId('reject', item, view)).setStyle(ButtonStyle.Danger).setLabel('Reject').setEmoji('❌'),
     new ButtonBuilder().setCustomId(buttonId('skip', item, view)).setStyle(ButtonStyle.Secondary).setLabel('Skip').setEmoji('⏭️'),
   );
