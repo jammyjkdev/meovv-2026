@@ -88,7 +88,7 @@ function chrome(ctx, kicker, title, pageNo) {
   ctx.textAlign = 'left';
   ctx.fillText(config.event.eventName.toUpperCase(), MARGIN, MARGIN + 10);
   ctx.textAlign = 'right';
-  ctx.fillText(pageNo, W - MARGIN, MARGIN + 10);
+  ctx.fillText(`PAGE ${Number(pageNo)}`, W - MARGIN, MARGIN + 10);
   ctx.textAlign = 'left';
 
   let y = MARGIN + 110;
@@ -109,7 +109,7 @@ function chrome(ctx, kicker, title, pageNo) {
   ctx.fillStyle = MUTED;
   ctx.font = label(20);
   ctx.textAlign = 'center';
-  ctx.fillText(`🏁  ${config.event.credit}  ·  ${config.event.invite}  🏁`, W / 2, H - MARGIN + 10);
+  ctx.fillText(`${config.event.credit}  ·  ${config.event.invite}`, W / 2, H - MARGIN + 10);
   ctx.textAlign = 'left';
   return y + 40;
 }
