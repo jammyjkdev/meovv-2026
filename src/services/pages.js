@@ -277,10 +277,10 @@ function measureCell(ctx, e, colW, labelPx, nameMax) {
 }
 
 /** A cell, tilted and nudged a little so the grid doesn't read as a spreadsheet. */
-function drawCell(ctx, c, x, top, colW) {
+function drawCell(ctx, c, x, top, colW, straight = false) {
   const key = c.e.id ?? c.e.title;
-  const angle = deg(rand(key, 'cell-a', -2.2, 2.2));
-  const dx = rand(key, 'cell-x', -10, 14);
+  const angle = straight ? 0 : deg(rand(key, 'cell-a', -2.2, 2.2));
+  const dx = straight ? 0 : rand(key, 'cell-x', -10, 14);
   tilted(ctx, x + dx, top, colW, c.h, angle, () => {
     ctx.fillStyle = MUTED;
     ctx.font = label(c.labelPx);
@@ -297,16 +297,16 @@ function drawCell(ctx, c, x, top, colW) {
       ctx.fillText(`${c.e.winners.length > 1 ? 'TIE  ·  ' : ''}${pct}% OF ${c.e.totalVotes} VOTES`, 0, y + 30);
     }
     ctx.fillStyle = RULE;
-    ctx.fillRect(0, c.h - 12, colW * rand(key, 'cell-r', 0.55, 1), 1);
+    ctx.fillRect(0, c.h - 12, straight ? colW : colW * rand(key, 'cell-r', 0.55, 1), 1);
   });
 }
 
 /**
- * Category → winner grid for superlatives and moments. Rows size to their content,
+ * Category → winner grid for superlatives and moments (`straight` turns off the tilt, as on the moments page). Rows size to their content,
  * type shrinks to fit the page, and anything left spills onto a continuation page.
  * @returns {Buffer[]} one buffer per page
  */
-function renderGrid(kicker, title, entries, firstPageNo) {
+function renderGrid(kicker, title, entries, firstPageNo, { straight = false } = {}) {
   const cols = entries.length > 6 ? 2 : 1;
   const gap = 40;
   const colW = (INNER - gap * (cols - 1)) / cols;
@@ -339,7 +339,7 @@ function renderGrid(kicker, title, entries, firstPageNo) {
     const { canvas, ctx } = page();
     let y = chrome(ctx, p ? `${kicker} · continued` : kicker, title, String(firstPageNo + p).padStart(2, '0'));
     for (const row of chunk) {
-      row.cells.forEach((c, j) => drawCell(ctx, { ...c, h: row.h - 8 }, MARGIN + j * (colW + gap), y, colW - 16));
+      row.cells.forEach((c, j) => drawCell(ctx, { ...c, h: row.h - 8 }, MARGIN + j * (colW + gap), y, colW - 16, straight));
       y += row.h;
     }
     return canvas;
@@ -632,7 +632,7 @@ function renderAll(book, { spreads = config.event.yearbook?.spreads ?? true } = 
   const add = (slug, canvases) => canvases.forEach((canvas, i) => inside.push({ no: n++, slug: `${slug}${canvases.length > 1 ? `-${i + 1}` : ''}`, canvas }));
   if (book.superlatives.length) add('superlatives', renderGrid('🏆 Members', 'MEMBER SUPERLATIVES', book.superlatives, n));
   if (book.favorites.length) add('fan-favorites', renderAlbums('💿 Fan favorites', '2026 FAN FAVORITES', book.favorites, n));
-  if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n));
+  if (book.moments.length) add('moments', renderGrid('📸 Moments', 'MEOVV MOMENTS OF 2026', book.moments, n, { straight: true }));
   if (book.memories.length) add('memories', renderMemories(book, n));
 
   const num = (x) => String(x).padStart(2, '0');
