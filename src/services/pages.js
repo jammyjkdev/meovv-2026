@@ -453,7 +453,8 @@ function renderAlbums(kicker, title, entries, pageNo) {
 const STICKY = ['#EDE1A6', '#E7CBCC', '#CADBE2', '#D9D0E5', '#DAE3C9', '#ECE4D3', '#E9D3B8'];
 const hand = (px) => `${px}px Caveat, Cinzel, Emoji`;
 const NOTE_PAD = 26;
-const NOTE_GAP = 34; // minimum space between notes, measured on their tilted outlines
+const NOTE_GAP = 34; // minimum space between notes side by side, measured on their tilted outlines
+const ROW_GAP = 26; // and between rows
 
 /** Size and type for a note by length: short ones are small squares, long ones wide sheets. */
 function noteSize(text, key) {
@@ -548,7 +549,7 @@ function noteRows(ctx, texts) {
     const offsets = r.map((n) => rand(n.key, 'ny', 0, Math.max(0, tallest - n.bh) + 16));
     const ext = Math.max(...r.map((n, i) => n.bh + offsets[i])); // what is actually drawn
     return {
-      h: ext + NOTE_GAP,
+      h: ext + ROW_GAP,
       ext,
       draw: (c, y) => {
         let x = MARGIN;
@@ -573,7 +574,7 @@ function flow(rows, header) {
     let y = header(ctx, out.length);
     let placed = 0;
     while (i < rows.length) {
-      if (placed && y + (rows[i].ext ?? rows[i].h) > BOTTOM - 28) break; // leave room for tape
+      if (placed && y + (rows[i].ext ?? rows[i].h) > BOTTOM - 10) break; // leave room for tape
       rows[i].draw(ctx, y);
       y += rows[i].h;
       i++;
