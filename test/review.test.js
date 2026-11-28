@@ -56,8 +56,9 @@ test('fan favorites: songs keep the record design and their official spelling; o
 
 test('fan moments pack densely: many short notes share a page, one huge note still fits a page', () => {
   const { renderMemories } = require('../src/services/pages');
-  const short = Array.from({ length: 12 }, (_, i) => ({ text: `moment ${i}` }));
-  assert.equal(renderMemories({ memories: short }, 5).length, 1, '12 short notes on one page');
+  const short = (n) => Array.from({ length: n }, (_, i) => ({ text: `moment ${i}` }));
+  assert.equal(renderMemories({ memories: short(9) }, 5).length, 1, '9 short notes fit the first page, under the big title');
+  assert.equal(renderMemories({ memories: short(21) }, 5).length, 2, 'continuation pages, with their slim header, take 12 more');
   const huge = [{ text: 'a really long memory. '.repeat(120) }];
   assert.equal(renderMemories({ memories: huge }, 5).length, 1, 'shrinks to fit rather than overflowing');
 });
