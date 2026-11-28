@@ -351,6 +351,18 @@ function renderGrid(kicker, title, entries, firstPageNo, { straight = false } = 
 /** Sleeve colours for winners without cover art: muted, printed-paper tones. */
 const SLEEVES = ['#C9BFAE', '#8FA3B0', '#B49AA4', '#9E9AB4', '#A8A59A', '#7E7A74', '#C2A88E', '#8C9B8B'];
 
+/** A winner's official song title when it is one of MEOVV's songs ("hit em" → "Hit 'Em"), else null. */
+function officialSong(text) {
+  const n = normalize(text);
+  return (config.event.songs ?? []).find((song) => normalize(song) === n) ?? null;
+}
+
+/** How a winner prints on the album page: songs keep their official spelling. */
+const winnerTitle = (e) => (e.winners.length ? e.winners.map((w) => officialSong(w.text) ?? w.text).join(' & ') : 'TBA');
+
+/** Is this favorite a song or album (record sleeve), rather than a look, outfit or moment (Polaroid)? */
+const isMusic = (e) => Boolean(coverFor(e)) || e.winners.some((w) => officialSong(w.text));
+
 /** Cover art for a winner: assets/covers/<winner>.png, the category id, or a cover named inside the winner. */
 function coverFor(e) {
   const slug = (t) => normalize(t).replace(/\s+/g, '-');
@@ -426,7 +438,7 @@ function drawSleeve(ctx, e, x, y, s, i) {
     ctx.fillStyle = SLEEVES[i % SLEEVES.length];
     ctx.fillRect(0, 0, s, s);
     ctx.shadowBlur = 0;
-    const title = e.winners.length ? e.winners.map((w) => w.text).join(' & ') : 'TBA';
+    const title = winnerTitle(e);
     // with a disc in front, the title keeps to the band above it
     const boxW = s - 28;
     const boxH = art ? s * 0.3 : s - 40;
@@ -450,7 +462,56 @@ function drawSleeve(ctx, e, x, y, s, i) {
   });
 }
 
-/** Every 2026 fan favorite on one page, as a scatter of album sleeves with their category underneath. */
+/** Biggest display type (≤ max) at which `text` wraps inside w × h. Returns { px, lines }. */
+function fitBlock(ctx, text, w, h, max = 58) {
+  let px = max;
+  let lines;
+  for (; px > 14; px -= 2) {
+    ctx.font = display(px);
+    lines = wrap(ctx, text, w);
+    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    if (widest <= w && lines.length * px * 1.02 <= h) break;
+  }
+  return { px, lines };
+}
+
+/** A favorite that isn't a song (a look, an outfit, a moment): a Polaroid with the title in the picture. */
+function drawPolaroid(ctx, e, x, y, s, i) {
+  const key = e.id ?? e.title;
+  const w = s * 0.86;
+  const h = s;
+  const border = s * 0.06;
+  const strip = s * 0.2; // the wide bottom edge
+  tilted(ctx, x + (s - w) / 2, y, w, h, deg(rand(key, 'pl-a', -6, 6)), () => {
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 5;
+    ctx.fillStyle = '#EFEAE0';
+    ctx.fillRect(0, 0, w, h);
+    ctx.shadowColor = 'transparent';
+    // the "photo": a muted print with the title on it
+    const pw = w - border * 2;
+    const ph = h - border - strip;
+    const g = ctx.createLinearGradient(0, 0, pw, ph);
+    g.addColorStop(0, mix(SLEEVES[i % SLEEVES.length], '#000000', 0.35));
+    g.addColorStop(1, mix(SLEEVES[i % SLEEVES.length], '#000000', 0.6));
+    ctx.fillStyle = g;
+    ctx.fillRect(border, border, pw, ph);
+    const { px, lines } = fitBlock(ctx, winnerTitle(e), pw - 24, ph - 24, 54);
+    ctx.fillStyle = '#F2EEE6';
+    ctx.font = display(px);
+    const top = border + (ph - lines.length * px * 1.02) / 2;
+    lines.forEach((l, j) => ctx.fillText(l, border + 12, top + px * 0.9 + j * px * 1.02));
+    // handwritten caption on the bottom edge
+    ctx.fillStyle = INK_DARK;
+    ctx.font = hand(Math.round(strip * 0.42));
+    ctx.fillText('MEOVV 2026', border + 4, h - strip * 0.32);
+    tapeCard(ctx, w, h, `polaroid|${key}`);
+    maybeSticker(ctx, w, h, `polaroid|${key}`, 0.3);
+  });
+}
+
+/** Every 2026 fan favorite on one page: songs as album sleeves, everything else as Polaroids, captioned underneath. */
 function renderAlbums(kicker, title, entries, pageNo) {
   const { canvas, ctx } = page();
   const top = chrome(ctx, kicker, title, String(pageNo).padStart(2, '0'));
@@ -466,7 +527,8 @@ function renderAlbums(kicker, title, entries, pageNo) {
     const row = Math.floor(i / cols);
     const x = MARGIN + col * colW + rand(key, 'al-x', -6, Math.max(-6, colW - s * 1.12));
     const y = top + 18 + row * rowH + rand(key, 'al-y', 0, Math.max(0, rowH - s - captionH - 30));
-    drawSleeve(ctx, e, x, y, s, i);
+    if (isMusic(e)) drawSleeve(ctx, e, x, y, s, i);
+    else drawPolaroid(ctx, e, x, y, s, i);
     // caption
     tilted(ctx, x, y + s + 12, colW - 12, captionH - 12, deg(rand(key, 'al-c', -2.5, 2.5)), () => {
       ctx.fillStyle = MUTED;
