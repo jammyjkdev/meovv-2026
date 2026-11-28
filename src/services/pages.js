@@ -132,7 +132,7 @@ function page() {
 }
 
 /** Running header + footer shared by every inner page. Returns the y where content starts. */
-function chrome(ctx, kicker, title, pageNo) {
+function chrome(ctx, kicker, title, pageNo, { compact = false } = {}) {
   ctx.fillStyle = MUTED;
   ctx.font = label(22);
   ctx.textAlign = 'left';
@@ -142,6 +142,20 @@ function chrome(ctx, kicker, title, pageNo) {
   ctx.textAlign = 'left';
 
   let y = MARGIN + 110;
+  if (compact) {
+    // continuation pages: one small line instead of the big title, so the content gets the room
+    ctx.fillStyle = MUTED;
+    ctx.font = label(22);
+    ctx.fillText(`${kicker ? `${kicker.toUpperCase()}  ·  ` : ''}${title.toUpperCase()}`, MARGIN, MARGIN + 66);
+    ctx.fillStyle = RULE;
+    ctx.fillRect(MARGIN, MARGIN + 86, INNER, 2);
+    ctx.fillStyle = MUTED;
+    ctx.font = label(20);
+    ctx.textAlign = 'center';
+    ctx.fillText(`${config.event.credit}  ·  ${config.event.invite}`, W / 2, H - MARGIN + 10);
+    ctx.textAlign = 'left';
+    return MARGIN + 110;
+  }
   if (kicker) {
     ctx.fillStyle = MUTED;
     ctx.font = label(24);
@@ -690,30 +704,50 @@ function renderAlbums(kicker, title, entries, pageNo) {
 const STICKY = ['#EDE1A6', '#E7CBCC', '#CADBE2', '#D9D0E5', '#DAE3C9', '#ECE4D3', '#E9D3B8'];
 const hand = (px) => `${px}px Caveat, Cinzel, Emoji`;
 const NOTE_PAD = 26;
-const NOTE_GAP = 34; // minimum space between notes side by side, measured on their tilted outlines
-const ROW_GAP = 26; // and between rows
 
-/** Size and type for a note by length: short ones are small squares, long ones wide sheets. */
-function noteSize(text, key) {
-  const n = text.length;
-  if (n <= 60) return { w: rand(key, 'nw', 215, 255), px: 36 };
-  if (n <= 140) return { w: rand(key, 'nw', 265, 315), px: 31 };
-  if (n <= 280) return { w: rand(key, 'nw', 380, 450), px: 30 };
-  return { w: rand(key, 'nw', 500, 600), px: 28 };
-}
+// Notes sit on a pinboard of NOTE_COLS columns. A note spans 1–3 columns depending on how much it says,
+// is only as tall as its text needs (short ones stay roughly square), and drops into the lowest open spot.
+const NOTE_COLS = 3;
+const NOTE_COL_GAP = 26;
+const NOTE_COL_W = (INNER - NOTE_COL_GAP * (NOTE_COLS - 1)) / NOTE_COLS;
+const spanWidth = (span) => NOTE_COL_W * span + NOTE_COL_GAP * (span - 1);
 
-/** Measure a note: wrapped lines, height (at least nearly square), tilt and the tilted bounding box. */
-function measureNote(ctx, text, i) {
-  const key = `${i}|${text}`;
-  const { w, px } = noteSize(text, key);
+/** Type size by length: short notes write big, long ones smaller. */
+const notePx = (text) => (text.length <= 40 ? 40 : text.length <= 120 ? 34 : text.length <= 300 ? 30 : 27);
+
+/**
+ * Measure a note `span` columns wide at `px`: wrapped lines, height, tilt, and the tilted bounding box,
+ * with the tilt eased off if the note would otherwise poke out of its columns.
+ */
+function measureNoteAt(ctx, text, key, span, px) {
+  const slot = spanWidth(span);
+  const w = slot * rand(key, 'nw', 0.88, 0.96);
   ctx.font = hand(px);
   const lineH = px * 1.12;
   const lines = wrap(ctx, text, w - NOTE_PAD * 2);
-  const h = Math.max(w * 0.82, NOTE_PAD * 2 + 18 + lines.length * lineH);
-  const angle = deg(rand(key, 'na', -5, 5));
-  const bw = Math.abs(Math.cos(angle)) * w + Math.abs(Math.sin(angle)) * h;
-  const bh = Math.abs(Math.sin(angle)) * w + Math.abs(Math.cos(angle)) * h;
-  return { key, text, w, h, px, lineH, lines, angle, bw, bh, color: STICKY[hash(key) % STICKY.length], taped: rand(key, 'nt', 0, 1) < 0.3 };
+  const textH = NOTE_PAD * 2 + 14 + lines.length * lineH;
+  const h = Math.max(textH, span === 1 ? w * 0.72 : w * 0.34);
+  let angle = deg(rand(key, 'na', -3.5, 3.5));
+  const box = (a) => [Math.abs(Math.cos(a)) * w + Math.abs(Math.sin(a)) * h, Math.abs(Math.sin(a)) * w + Math.abs(Math.cos(a)) * h];
+  let [bw, bh] = box(angle);
+  while (bw > slot && Math.abs(angle) > deg(0.3)) { angle *= 0.7; [bw, bh] = box(angle); }
+  return { key, text, span, slot, w, h, px, lineH, lines, angle, bw, bh, color: STICKY[hash(key) % STICKY.length], taped: rand(key, 'nt', 0, 1) < 0.3 };
+}
+
+/** The narrowest span at which a note isn't a tall thin strip, shrinking the type if it can't fit a page. */
+function measureNote(ctx, text, i, maxH) {
+  const key = `${i}|${text}`;
+  let px = notePx(text);
+  for (;;) {
+    let best = null;
+    for (let span = 1; span <= NOTE_COLS; span++) {
+      const n = measureNoteAt(ctx, text, key, span, px);
+      best = n;
+      if (n.h <= Math.max(n.w * 1.15, 260)) break; // not too tall for its width
+    }
+    if (best.bh <= maxH || px <= 18) return best;
+    px -= 2; // even full width is taller than a page: write smaller
+  }
 }
 
 /** Draw a note whose tilted bounding box has its top-left at (x, y). */
@@ -762,71 +796,67 @@ function drawNote(ctx, n, x, y) {
   });
 }
 
-/** Pack notes into rows that fit the page width, keeping NOTE_GAP between tilted outlines. */
-function noteRows(ctx, texts) {
-  const notes = texts.map((t, i) => measureNote(ctx, t, i));
-  const rows = [];
-  let row = [];
-  let used = 0;
-  for (const n of notes) {
-    if (row.length && used + NOTE_GAP + n.bw > INNER) { rows.push(row); row = []; used = 0; }
-    used += (row.length ? NOTE_GAP : 0) + n.bw;
-    row.push(n);
-  }
-  if (row.length) rows.push(row);
-
-  return rows.map((r) => {
-    const key = r.map((n) => n.key).join('|');
-    const tallest = Math.max(...r.map((n) => n.bh));
-    const width = r.reduce((s, n) => s + n.bw, 0) + NOTE_GAP * (r.length - 1);
-    // share the spare width out at random: some before, some between
-    const spare = INNER - width;
-    const cuts = r.map((_, i) => rand(key, `cut${i}`, 0, 1));
-    const sum = cuts.reduce((a, b) => a + b, 0) + rand(key, 'cutEnd', 0.2, 1);
-    const offsets = r.map((n) => rand(n.key, 'ny', 0, Math.max(0, tallest - n.bh) + 16));
-    const ext = Math.max(...r.map((n, i) => n.bh + offsets[i])); // what is actually drawn
-    return {
-      h: ext + ROW_GAP,
-      ext,
-      draw: (c, y) => {
-        let x = MARGIN;
-        r.forEach((n, i) => {
-          x += (spare * cuts[i]) / sum;
-          drawNote(c, n, x, y + offsets[i]);
-          x += n.bw + NOTE_GAP;
-        });
-      },
-    };
-  });
-}
-
 /**
- * Lay rows out over as many pages as needed. Returns one canvas per page.
+ * Fan moments ("What MEOVV moment made your 2026?") as sticky notes on a pinboard. Notes are placed biggest
+ * first, each on the first page with room, in its lowest open spot, so the small ones backfill the gaps
+ * the big ones leave and every page mixes long and short notes.
  */
-function flow(rows, header) {
-  const out = [];
-  let i = 0;
-  while (i < rows.length) {
-    const { canvas, ctx } = page();
-    let y = header(ctx, out.length);
-    let placed = 0;
-    while (i < rows.length) {
-      if (placed && y + (rows[i].ext ?? rows[i].h) > BOTTOM - 10) break; // leave room for tape
-      rows[i].draw(ctx, y);
-      y += rows[i].h;
-      i++;
-      placed++;
-    }
-    out.push(canvas);
-  }
-  return out;
-}
-
-/** Fan moments ("What MEOVV moment made your 2026?") as sticky notes. */
 function renderMemories(book, firstPageNo) {
   const { ctx } = page();
-  return flow(noteRows(ctx, book.memories.map((m) => m.text)), (c, n) =>
-    chrome(c, n ? '💌 Year in Review · continued' : '💌 Year in Review', config.event.memories.prompt, String(firstPageNo + n).padStart(2, '0')));
+  const header = (c, n) => chrome(c, '💌 Year in Review', config.event.memories.prompt, String(firstPageNo + n).padStart(2, '0'), { compact: n > 0 });
+  const firstTop = header(page().ctx, 0);
+  const nextTop = header(page().ctx, 1);
+  const bottom = BOTTOM - 12; // leave room for tape
+  const notes = book.memories
+    .map((m, i) => measureNote(ctx, m.text, i, bottom - nextTop))
+    // biggest first (they're hardest to place); the small ones then fill the gaps they leave
+    .sort((a, b) => b.bh * b.span - a.bh * a.span || hash(`order|${a.key}`) - hash(`order|${b.key}`));
+
+  const pages = []; // { top, cols: column floor heights, placed: [] }
+  const newPage = () => {
+    const top = pages.length ? nextTop : firstTop;
+    const pg = { top, cols: Array(NOTE_COLS).fill(top), placed: [] };
+    pages.push(pg);
+    return pg;
+  };
+  const tryPlace = (pg, n) => {
+    let best = null;
+    for (let c = 0; c + n.span <= NOTE_COLS; c++) {
+      const y = Math.max(...pg.cols.slice(c, c + n.span));
+      if (y + n.bh <= bottom && (!best || y < best.y)) best = { c, y };
+    }
+    if (!best) return false;
+    const x = MARGIN + best.c * (NOTE_COL_W + NOTE_COL_GAP) + rand(n.key, 'nx', 0, Math.max(0, n.slot - n.bw));
+    pg.placed.push({ n, x, y: best.y });
+    for (let c = best.c; c < best.c + n.span; c++) pg.cols[c] = best.y + n.bh + NOTE_COL_GAP;
+    return true;
+  };
+  // other shapes a note may take to squeeze onto an existing page rather than start a new one
+  const alternatives = (n) => {
+    const out = [];
+    for (let span = 1; span <= NOTE_COLS; span++) {
+      if (span === n.span) continue;
+      const m = measureNoteAt(ctx, n.text, n.key, span, n.px);
+      if (m.h <= m.w * 1.8) out.push(m); // not a ribbon
+    }
+    return out;
+  };
+  for (const n of notes) {
+    if (pages.some((pg) => tryPlace(pg, n))) continue;
+    if (alternatives(n).some((m) => pages.some((pg) => tryPlace(pg, m)))) continue;
+    tryPlace(newPage(), n);
+  }
+
+  return pages.map((pg, i) => {
+    const { canvas, ctx: c } = page();
+    header(c, i);
+    // spread any spare height between the rows of notes a little, so a page doesn't end in a gap
+    const used = Math.max(...pg.cols) - NOTE_COL_GAP;
+    const slack = Math.max(0, Math.min(bottom - used, 60));
+    const span = used - pg.top || 1;
+    for (const { n, x, y } of pg.placed) drawNote(c, n, x, y + (slack * (y - pg.top)) / span);
+    return canvas;
+  });
 }
 
 // ── spreads ───────────────────────────────────────────────────────
