@@ -8,7 +8,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { createCanvas, GlobalFonts, Image } = require('@napi-rs/canvas');
 const config = require('../config');
-const { normalize, truncate } = require('../lib/text');
+const { normalize } = require('../lib/text');
 
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
@@ -34,8 +34,9 @@ function decode(file) {
  *   assets/logo.png|svg     the MEOVV logo for the cover (white on transparent); without it the cover prints MEOVV as text
  *   assets/covers/<name>.*  album/single covers for the Fan Favorites page, named after the winner ("go-hard.jpg")
  *                           or the category id ("song.png"); winners without art get a printed sleeve with the title
- *   assets/wordmarks/<name>.png  song/album title logos (white on transparent), printed in ink on the sleeves
- *                           in place of typed titles ("hit-em.png", "ddi-ro-ri.png")
+ *   assets/wordmarks/<name>.png  song/album title logos on transparent, used on the sleeves in place of typed
+ *                           titles ("hit-em.png", "ddi-ro-ri.png"): plain white ones print in ink, colour or
+ *                           textured ones (GO HARD's metal, BURNING UP's glow) print as they are
  */
 let LOGO = null;
 const COVERS = new Map();
@@ -52,11 +53,27 @@ const assetsReady = (async () => {
   const wm = path.join(ASSETS, 'wordmarks');
   for (const f of fs.existsSync(wm) ? fs.readdirSync(wm).filter((n) => /\.(png|svg)$/i.test(n)) : []) {
     const img = await decode(path.join(wm, f));
-    if (img) WORDMARKS.set(normalize(f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')).replace(/\s+/g, '-'), img);
+    if (img) WORDMARKS.set(normalize(f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')).replace(/\s+/g, '-'), { img, ink: isPlainWhite(img) });
   }
   return { logo: Boolean(LOGO), covers: COVERS.size, wordmarks: WORDMARKS.size };
 })();
 const logoReady = assetsReady.then((a) => a.logo);
+
+/** True when an image is plain white lettering (printed in ink); false for colour or textured logos (printed as is). */
+function isPlainWhite(img) {
+  const c = createCanvas(img.width, img.height);
+  const x = c.getContext('2d');
+  x.drawImage(img, 0, 0);
+  const d = x.getImageData(0, 0, img.width, img.height).data;
+  let seen = 0;
+  let off = 0;
+  for (let k = 0; k < d.length; k += 16) {
+    if (d[k + 3] < 200) continue;
+    seen++;
+    if (Math.min(d[k], d[k + 1], d[k + 2]) < 225) off++;
+  }
+  return seen > 0 && off / seen < 0.03;
+}
 
 const W = 1080;
 const H = 1350;
@@ -481,8 +498,23 @@ function drawSleeve(ctx, e, x, y, s, i) {
       // the song's own logo, in ink, fitted into the title band
       const boxW = s - 28;
       const boxH = art ? s * 0.3 : s * 0.55;
-      const k = Math.min(boxW / mark.width, (boxH - 8) / mark.height);
-      ctx.drawImage(inked(mark, INK_DARK), 14, 14 + (art ? 0 : (boxH - mark.height * k) / 2), mark.width * k, mark.height * k);
+      const { img, ink } = mark;
+      const k = Math.min(boxW / img.width, (boxH - 8) / img.height);
+      const my = 14 + (art ? 0 : (boxH - img.height * k) / 2);
+      if (ink) ctx.drawImage(inked(img, INK_DARK), 14, my, img.width * k, img.height * k);
+      else {
+        // colour logos keep their look; a soft shadow lifts them off the paper
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 3;
+        ctx.drawImage(img, 14, my, img.width * k, img.height * k);
+        ctx.shadowColor = 'rgba(0,0,0,0.35)';
+        ctx.shadowBlur = 2;
+        ctx.shadowOffsetY = 1;
+        ctx.drawImage(img, 14, my, img.width * k, img.height * k);
+        ctx.restore();
+      }
     } else {
       const title = winnerTitle(e);
       // with a disc in front, the title keeps to the band above it
@@ -624,14 +656,22 @@ function renderAlbums(kicker, title, entries, pageNo) {
           e.wins.forEach((w, j) => {
             ctx.fillStyle = MUTED;
             ctx.font = label(14);
-            const p = pct(w);
-            const t = truncate(w.title.toUpperCase(), 60);
+            const p = pct(w) ? `  ${pct(w)}` : '';
+            ctx.font = label(13);
+            const pw = ctx.measureText(p).width;
+            // shorten the category name with … so the percentage always has room
+            ctx.font = label(14);
+            let t = w.title.toUpperCase();
+            if (ctx.measureText(t).width > colW - 16 - pw) {
+              while (t.length > 4 && ctx.measureText(`${t}…`).width > colW - 16 - pw) t = t.slice(0, -1);
+              t = `${t.trimEnd()}…`;
+            }
             ctx.fillText(t, 0, (j + 1) * lineH - 5);
             if (p) {
               const tw = ctx.measureText(t).width;
               ctx.fillStyle = INK;
               ctx.font = label(13);
-              ctx.fillText(`  ${p}`, Math.min(tw, colW - 70), (j + 1) * lineH - 5);
+              ctx.fillText(p, tw, (j + 1) * lineH - 5);
             }
           });
         });
