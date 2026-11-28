@@ -2,3 +2,6 @@ node_modules/
 .env
 data/
 *.log
+# official album artwork: fetched on the bot's machine with `npm run covers`, never committed
+assets/covers/*
+!assets/covers/README.md

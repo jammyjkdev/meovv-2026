@@ -8,7 +8,8 @@
     "deploy": "node src/deploy-commands.js",
     "test": "node --test test/*.test.js",
     "schedule": "node scripts/print-schedule.js",
-    "render": "node scripts/render-sample.js"
+    "render": "node scripts/render-sample.js",
+    "covers": "node scripts/fetch-covers.js"
   },
   "repository": {
     "type": "git",
