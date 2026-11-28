@@ -8,7 +8,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { createCanvas, GlobalFonts, Image } = require('@napi-rs/canvas');
 const config = require('../config');
-const { normalize } = require('../lib/text');
+const { normalize, truncate } = require('../lib/text');
 
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 GlobalFonts.registerFromPath(path.join(FONT_DIR, 'Anton-Regular.ttf'), 'Anton');
@@ -34,9 +34,12 @@ function decode(file) {
  *   assets/logo.png|svg     the MEOVV logo for the cover (white on transparent); without it the cover prints MEOVV as text
  *   assets/covers/<name>.*  album/single covers for the Fan Favorites page, named after the winner ("go-hard.jpg")
  *                           or the category id ("song.png"); winners without art get a printed sleeve with the title
+ *   assets/wordmarks/<name>.png  song/album title logos (white on transparent), printed in ink on the sleeves
+ *                           in place of typed titles ("hit-em.png", "ddi-ro-ri.png")
  */
 let LOGO = null;
 const COVERS = new Map();
+const WORDMARKS = new Map();
 const assetsReady = (async () => {
   const logo = ['logo.svg', 'logo.png'].map((n) => path.join(ASSETS, n)).find((f) => fs.existsSync(f));
   if (logo) LOGO = await decode(logo);
@@ -46,7 +49,12 @@ const assetsReady = (async () => {
     const img = await decode(path.join(dir, f));
     if (img) COVERS.set(normalize(f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')).replace(/\s+/g, '-'), img);
   }
-  return { logo: Boolean(LOGO), covers: COVERS.size };
+  const wm = path.join(ASSETS, 'wordmarks');
+  for (const f of fs.existsSync(wm) ? fs.readdirSync(wm).filter((n) => /\.(png|svg)$/i.test(n)) : []) {
+    const img = await decode(path.join(wm, f));
+    if (img) WORDMARKS.set(normalize(f.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')).replace(/\s+/g, '-'), img);
+  }
+  return { logo: Boolean(LOGO), covers: COVERS.size, wordmarks: WORDMARKS.size };
 })();
 const logoReady = assetsReady.then((a) => a.logo);
 
@@ -363,6 +371,36 @@ const winnerTitle = (e) => (e.winners.length ? e.winners.map((w) => officialSong
 /** Is this favorite a song or album (record sleeve), rather than a look, outfit or moment (Polaroid)? */
 const isMusic = (e) => Boolean(coverFor(e)) || e.winners.some((w) => officialSong(w.text));
 
+/** Find a file-named asset for a winner: exact name, or the longest asset name inside the winner's name. */
+function assetFor(map, e) {
+  const slug = (t) => normalize(t).replace(/\s+/g, '-');
+  const w = e.winners[0] ? slug(officialSong(e.winners[0].text) ?? e.winners[0].text) : '';
+  if (!w) return null;
+  if (map.has(w)) return map.get(w);
+  const hit = [...map.keys()].filter((k) => w.startsWith(`${k}-`) || w.includes(`-${k}-`) || w.endsWith(`-${k}`)).sort((a, b) => b.length - a.length)[0];
+  return hit ? map.get(hit) : null;
+}
+
+/** The song's title logo, if there is one ("BURNING UP (Rush Remix)" uses burning-up.png). Ties keep typed titles. */
+const wordmarkFor = (e) => (e.winners.length === 1 ? assetFor(WORDMARKS, e) : null);
+
+/** A white-on-transparent image recoloured to `color` (cached). */
+const inkCache = new Map();
+function inked(img, color) {
+  const k = `${color}|${img.width}x${img.height}|${WORDMARKS.size}`;
+  let c = inkCache.get(img)?.get(k);
+  if (c) return c;
+  c = createCanvas(img.width, img.height);
+  const x = c.getContext('2d');
+  x.drawImage(img, 0, 0);
+  x.globalCompositeOperation = 'source-in';
+  x.fillStyle = color;
+  x.fillRect(0, 0, img.width, img.height);
+  if (!inkCache.has(img)) inkCache.set(img, new Map());
+  inkCache.get(img).set(k, c);
+  return c;
+}
+
 /** Cover art for a winner: assets/covers/<winner>.png, the category id, or a cover named inside the winner. */
 function coverFor(e) {
   const slug = (t) => normalize(t).replace(/\s+/g, '-');
@@ -438,21 +476,30 @@ function drawSleeve(ctx, e, x, y, s, i) {
     ctx.fillStyle = SLEEVES[i % SLEEVES.length];
     ctx.fillRect(0, 0, s, s);
     ctx.shadowBlur = 0;
-    const title = winnerTitle(e);
-    // with a disc in front, the title keeps to the band above it
-    const boxW = s - 28;
-    const boxH = art ? s * 0.3 : s - 40;
-    let px = 58;
-    let lines;
-    for (; px > 14; px -= 2) {
+    const mark = wordmarkFor(e);
+    if (mark) {
+      // the song's own logo, in ink, fitted into the title band
+      const boxW = s - 28;
+      const boxH = art ? s * 0.3 : s * 0.55;
+      const k = Math.min(boxW / mark.width, (boxH - 8) / mark.height);
+      ctx.drawImage(inked(mark, INK_DARK), 14, 14 + (art ? 0 : (boxH - mark.height * k) / 2), mark.width * k, mark.height * k);
+    } else {
+      const title = winnerTitle(e);
+      // with a disc in front, the title keeps to the band above it
+      const boxW = s - 28;
+      const boxH = art ? s * 0.3 : s - 40;
+      let px = 58;
+      let lines;
+      for (; px > 14; px -= 2) {
+        ctx.font = display(px);
+        lines = wrap(ctx, title, boxW);
+        const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        if (widest <= boxW && 14 + lines.length * px * 1.02 <= boxH) break;
+      }
+      ctx.fillStyle = INK_DARK;
       ctx.font = display(px);
-      lines = wrap(ctx, title, boxW);
-      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-      if (widest <= boxW && 14 + lines.length * px * 1.02 <= boxH) break;
+      lines.forEach((l, j) => ctx.fillText(l, 14, 14 + px * 0.9 + j * px * 1.02));
     }
-    ctx.fillStyle = INK_DARK;
-    ctx.font = display(px);
-    lines.forEach((l, j) => ctx.fillText(l, 14, 14 + px * 0.9 + j * px * 1.02));
     ctx.font = label(13);
     ctx.fillStyle = tint('#000000', 0.55);
     ctx.fillText('MEOVV', 14, s - 14);
@@ -511,32 +558,85 @@ function drawPolaroid(ctx, e, x, y, s, i) {
   });
 }
 
-/** Every 2026 fan favorite on one page: songs as album sleeves, everything else as Polaroids, captioned underneath. */
+/** Every 2026 fan favorite on one page, one card per winner: songs as album sleeves, then looks and moments as Polaroids. */
 function renderAlbums(kicker, title, entries, pageNo) {
   const { canvas, ctx } = page();
   const top = chrome(ctx, kicker, title, String(pageNo).padStart(2, '0'));
-  const cols = entries.length > 9 ? 4 : 3;
-  const rows = Math.ceil(entries.length / cols);
-  const colW = INNER / cols;
-  const captionH = 70;
-  const rowH = (BOTTOM - top) / rows;
-  const s = Math.min(colW * 0.8, rowH - captionH - 30); // room for the caption and the next row's tape
-  entries.forEach((e, i) => {
-    const key = e.id ?? e.title;
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = MARGIN + col * colW + rand(key, 'al-x', -6, Math.max(-6, colW - s * 1.12));
-    const y = top + 18 + row * rowH + rand(key, 'al-y', 0, Math.max(0, rowH - s - captionH - 30));
-    if (isMusic(e)) drawSleeve(ctx, e, x, y, s, i);
-    else drawPolaroid(ctx, e, x, y, s, i);
-    // caption
-    tilted(ctx, x, y + s + 12, colW - 12, captionH - 12, deg(rand(key, 'al-c', -2.5, 2.5)), () => {
+
+  // One card per winner, listing every category it won: songs first (record sleeves), then the looks and
+  // moments (Polaroids), each under its own heading.
+  const byWinner = (list) => {
+    const m = new Map();
+    for (const e of list) {
+      const k = normalize(winnerTitle(e));
+      if (!m.has(k)) m.set(k, { ...e, id: k, wins: [] });
+      m.get(k).wins.push(e);
+    }
+    return [...m.values()];
+  };
+  const groups = [
+    { label: '💿  SONGS', items: byWinner(entries.filter(isMusic)), draw: drawSleeve },
+    { label: '📸  LOOKS & MOMENTS', items: byWinner(entries.filter((e) => !isMusic(e))), draw: drawPolaroid },
+  ].filter((g) => g.items.length);
+
+  const lineH = 20;
+  const pct = (e) => (e.totalVotes && e.winners.length ? `${e.winners.length > 1 ? 'TIE ' : ''}${Math.round((e.winners[0].votes / e.totalVotes) * 100)}%` : '');
+  const headH = groups.length > 1 ? 44 : 0;
+  // fit: try more columns until every row's card + its list of wins fits the page
+  const layout = (cols) => {
+    const colW = INNER / cols;
+    const rows = groups.map((g) => {
+      const out = [];
+      for (let i = 0; i < g.items.length; i += cols) out.push(Math.max(...g.items.slice(i, i + cols).map((e) => e.wins.length)));
+      return out;
+    });
+    const captionTotal = rows.flat().reduce((n, lines) => n + lines * lineH + 26, 0);
+    const avail = BOTTOM - top - headH * groups.length - captionTotal;
+    const s = Math.min(colW * 0.7, avail / rows.flat().length - 34);
+    return { cols, colW, rows, s };
+  };
+  const maxItems = Math.max(...groups.map((g) => g.items.length));
+  let L = layout(Math.min(4, Math.max(2, maxItems)));
+  for (let c = L.cols + 1; L.s < 150 && c <= 5; c++) L = layout(c);
+  const { cols, colW, rows, s } = L;
+
+  let y0 = top;
+  let n = 0;
+  groups.forEach((g, gi) => {
+    if (headH) {
       ctx.fillStyle = MUTED;
-      ctx.font = label(14);
-      wrap(ctx, e.title.toUpperCase(), colW - 16).slice(0, 2).forEach((l, j) => ctx.fillText(l, 0, 18 + j * 18));
-      const votes = e.totalVotes && e.winners.length ? `${e.winners.length > 1 ? 'TIE · ' : ''}${Math.round((e.winners[0].votes / e.totalVotes) * 100)}% OF ${e.totalVotes} VOTES` : '';
-      ctx.font = label(12);
-      ctx.fillText(votes, 0, 54);
+      ctx.font = label(20);
+      ctx.fillText(g.label, MARGIN, y0 + 26);
+      y0 += headH;
+    }
+    rows[gi].forEach((lines, r) => {
+      const rowItems = g.items.slice(r * cols, r * cols + cols);
+      // centre a short row
+      const offset = ((cols - rowItems.length) * colW) / 2;
+      rowItems.forEach((e, i) => {
+        const key = e.id;
+        const cx = MARGIN + offset + i * colW;
+        const x = cx + (colW - s * 1.15) / 2 + rand(key, 'al-x', -12, 12);
+        const y = y0 + 16 + rand(key, 'al-y', 0, 10);
+        g.draw(ctx, e, x, y, s, n++);
+        // every category this winner took, with its share of the vote
+        tilted(ctx, cx + 8, y0 + s + 40, colW - 16, lines * lineH, deg(rand(key, 'al-c', -1.5, 1.5)), () => {
+          e.wins.forEach((w, j) => {
+            ctx.fillStyle = MUTED;
+            ctx.font = label(14);
+            const p = pct(w);
+            const t = truncate(w.title.toUpperCase(), 60);
+            ctx.fillText(t, 0, (j + 1) * lineH - 5);
+            if (p) {
+              const tw = ctx.measureText(t).width;
+              ctx.fillStyle = INK;
+              ctx.font = label(13);
+              ctx.fillText(`  ${p}`, Math.min(tw, colW - 70), (j + 1) * lineH - 5);
+            }
+          });
+        });
+      });
+      y0 += 16 + s + 34 + lines * lineH + 26;
     });
   });
   return [canvas];
@@ -746,4 +846,4 @@ function renderAll(book, { spreads = config.event.yearbook?.spreads ?? true } = 
   return pages;
 }
 
-module.exports = { assetsReady, logoReady, renderAll, renderCover, renderGrid, renderAlbums, renderMemories, W, H };
+module.exports = { assetsReady, logoReady, renderAll, renderCover, renderGrid, renderAlbums, renderMemories, isMusic, winnerTitle, W, H };

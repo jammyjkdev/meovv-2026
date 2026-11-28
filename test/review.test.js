@@ -45,9 +45,11 @@ test('fan favorites print as one page of album sleeves, however many categories'
 });
 
 test('fan favorites: songs keep the record design and their official spelling; other winners are Polaroids', () => {
-  const src = require('node:fs').readFileSync(require.resolve('../src/services/pages'), 'utf8');
-  assert.match(src, /if \(isMusic\(e\)\) drawSleeve/);
-  const { renderAlbums } = require('../src/services/pages');
+  const { renderAlbums, isMusic, winnerTitle } = require('../src/services/pages');
   const fav = (t) => ({ id: t, title: t, winners: [{ text: t, votes: 3 }], totalVotes: 5 });
-  assert.equal(renderAlbums('k', 't', [fav('hit em'), fav('Red hair Narin'), fav('Gawon F1')], 3).length, 1);
+  assert.equal(isMusic(fav('hit em')), true);
+  assert.equal(winnerTitle(fav('hit em')), "Hit 'Em");
+  assert.equal(isMusic(fav('Red hair Narin')), false);
+  assert.equal(winnerTitle(fav('Red hair Narin')), 'Red hair Narin');
+  assert.equal(renderAlbums('k', 't', [fav('hit em'), fav("Hit 'Em"), fav('Red hair Narin'), fav('Gawon F1')], 3).length, 1);
 });

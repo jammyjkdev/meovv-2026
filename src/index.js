@@ -105,7 +105,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   log.info('Connecting to MongoDB…');
   ctx.db = await db.open(config.env.mongoUri);
   const art = await assetsReady;
-  log.info(`Yearbook artwork: ${art.logo ? 'logo' : 'no logo (cover prints MEOVV as text)'}, ${art.covers} album cover(s) in assets/covers`);
+  log.info(`Yearbook artwork: ${art.logo ? 'logo' : 'no logo (cover prints MEOVV as text)'}, ${art.covers} album cover(s) in assets/covers, ${art.wordmarks} title logo(s) in assets/wordmarks`);
   log.info('Logging in to Discord…');
   await client.login(config.env.token);
 })().catch((err) => {
