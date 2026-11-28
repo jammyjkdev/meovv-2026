@@ -2,7 +2,7 @@ const config = require('../config');
 const { pollDurationHours } = require('../lib/plan');
 const { pickWinners } = require('../lib/tally');
 const { truncate } = require('../lib/text');
-const { findCategory, ts } = require('./event');
+const { findCategory, findMember, ts } = require('./event');
 const { pollOptions } = require('./nominations');
 const { DateTime } = require('luxon');
 const log_ = require('../lib/log')('polls');
@@ -47,7 +47,8 @@ async function postPoll(ctx, pollKey, opts = {}) {
   }
 
   const built = opts.options ? { options: opts.options } : await pollOptions(db, pollKey);
-  const options = built.options.slice(0, 10);
+  // An answer that is just a member's name gets that member's colour heart.
+  const options = built.options.slice(0, 10).map((o) => (o.emoji ? o : { ...o, emoji: findMember(o.text)?.emoji ?? null }));
   if (options.length < 2) {
     return { posted: false, reason: `**${cat.title}** has only ${options.length} eligible option(s) — need at least 2. Add options with \`/yb poll post options:\` or check nominations.` };
   }
